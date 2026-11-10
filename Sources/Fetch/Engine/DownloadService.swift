@@ -70,12 +70,8 @@ final class DownloadService: @unchecked Sendable {
     }
 
     func fetchInfo(url: URL, cookiesFromBrowser: String?) async throws -> VideoInfo {
-        do {
-            return try await fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: nil)
-        } catch let failure as EngineFailure where failure.mapped.kind == .botCheck {
-            // Datacenter addresses often trip YouTube's web client. The TV and mobile
-            // web clients usually still return the file without a browser sign-in.
-            return try await fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: Self.alternateYouTubeClients)
+        try await retryingYouTubeBotCheck { clients in
+            try await self.fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: clients)
         }
     }
 
@@ -112,30 +108,37 @@ final class DownloadService: @unchecked Sendable {
         cookiesFromBrowser: String?,
         onProgress: @escaping @Sendable (DownloadProgressUpdate) -> Void
     ) async throws -> DownloadOutcome {
+        try await retryingYouTubeBotCheck { clients in
+            try await self.downloadAttempt(
+                url: url,
+                info: info,
+                container: container,
+                quality: quality,
+                maxBytes: maxBytes,
+                outputDirectory: outputDirectory,
+                cookiesFromBrowser: cookiesFromBrowser,
+                youtubeClients: clients,
+                onProgress: onProgress
+            )
+        }
+    }
+
+    /// The default web client asks datacenter addresses to sign in. Other player
+    /// clients often still return the same public video.
+    private func retryingYouTubeBotCheck<T>(_ body: (String?) async throws -> T) async throws -> T {
         do {
-            return try await downloadAttempt(
-                url: url,
-                info: info,
-                container: container,
-                quality: quality,
-                maxBytes: maxBytes,
-                outputDirectory: outputDirectory,
-                cookiesFromBrowser: cookiesFromBrowser,
-                youtubeClients: nil,
-                onProgress: onProgress
-            )
+            return try await body(nil)
         } catch let failure as EngineFailure where failure.mapped.kind == .botCheck {
-            return try await downloadAttempt(
-                url: url,
-                info: info,
-                container: container,
-                quality: quality,
-                maxBytes: maxBytes,
-                outputDirectory: outputDirectory,
-                cookiesFromBrowser: cookiesFromBrowser,
-                youtubeClients: Self.alternateYouTubeClients,
-                onProgress: onProgress
-            )
+            var last = failure
+            for clients in Self.alternateYouTubeClients {
+                do {
+                    return try await body(clients)
+                } catch let next as EngineFailure {
+                    last = next
+                    if next.mapped.kind != .botCheck { throw next }
+                }
+            }
+            throw last
         }
     }
 
@@ -574,7 +577,7 @@ final class DownloadService: @unchecked Sendable {
         return capture.result(code: code)
     }
 
-    private static let alternateYouTubeClients = "tv,web_safari,mweb"
+    private static let alternateYouTubeClients = ["android_vr", "tv_embedded", "ios", "tv", "web_embedded", "mweb"]
 
     private func baseArguments(_ binaries: EngineBinaries, youtubeClients: String? = nil) -> [String] {
         var arguments = [
