@@ -135,23 +135,6 @@ else
 fi
 
 log ""
-log "Quality menus from a resolved video, video format and audio format"
-MENU_URL="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
-if "$BIN" --menu-shots "$ROOT/artifacts/screenshots" "$MENU_URL" > "$OUT/menus.txt" 2>"$OUT/menus.err"; then
-  cat "$OUT/menus.txt" | tee -a "$REPORT"
-else
-  log "Quality menu screenshots failed"
-  cat "$OUT/menus.err" | tee -a "$REPORT" || true
-  exit 1
-fi
-for shot in quality-video-light quality-video-dark quality-audio-light quality-audio-dark; do
-  if [[ ! -s "$ROOT/artifacts/screenshots/${shot}.png" ]]; then
-    log "missing $shot.png"
-    exit 1
-  fi
-done
-
-log ""
 log "YouTube metadata"
 YOUTUBE_URL=""
 for candidate in \
@@ -187,6 +170,22 @@ if [[ -z "$MEDIA_URL" ]]; then
   log "No public video could be read"
   exit 1
 fi
+
+log ""
+log "Quality menus from resolved media: $MEDIA_URL"
+if "$BIN" --menu-shots "$ROOT/artifacts/screenshots" "$MEDIA_URL" > "$OUT/menus.txt" 2>"$OUT/menus.err"; then
+  cat "$OUT/menus.txt" | tee -a "$REPORT"
+else
+  log "Quality menu screenshots failed"
+  cat "$OUT/menus.err" | tee -a "$REPORT" || true
+  exit 1
+fi
+for shot in quality-video-light quality-video-dark quality-audio-light quality-audio-dark; do
+  if [[ ! -s "$ROOT/artifacts/screenshots/${shot}.png" ]]; then
+    log "missing $shot.png"
+    exit 1
+  fi
+done
 
 download_to() {
   local url="$1"

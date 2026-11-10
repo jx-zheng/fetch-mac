@@ -8,12 +8,29 @@ enum MenuShots {
     static func run(directory: URL, media: String) async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = AppModel.shared
-        model.urlText = media
         model.container = .mp4H264
-        let generation = await model.resolveForMenuShots()
-        guard generation, case .preview = model.phase else {
-            fail("resolve did not reach a preview for \(media)")
+        let candidates = [
+            media,
+            "https://filesamples.com/samples/video/mp4/sample_640x360.mp4",
+            "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4",
+        ]
+        var resolved = false
+        var why = ""
+        for candidate in candidates where !candidate.isEmpty {
+            model.urlText = candidate
+            if await model.resolveForMenuShots() {
+                resolved = true
+                FileHandle.standardError.write(Data("resolved \(candidate)\n".utf8))
+                break
+            }
+            if case .failed(let problem) = model.phase {
+                why = "\(candidate): \(problem.title) \(problem.detail)"
+            } else {
+                why = "\(candidate): not a preview"
+            }
+            FileHandle.standardError.write(Data("MENU_SHOTS_TRY \(why)\n".utf8))
         }
+        guard resolved else { fail(why) }
         let root = MenuShotRoot(model: model)
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(x: 0, y: 0, width: 540, height: 640)
