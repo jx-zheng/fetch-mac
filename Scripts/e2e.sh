@@ -24,12 +24,22 @@ log "Host: $(sw_vers -productVersion) $(uname -m)"
 
 log ""
 log "Engine update (already current is success)"
-if "$BIN" --cli update stable > "$OUT/update.txt" 2>"$OUT/update.err"; then
+UPDATE_OK=0
+for _ in 1 2 3; do
+  if "$BIN" --cli update stable > "$OUT/update.txt" 2>"$OUT/update.err"; then
+    UPDATE_OK=1
+    break
+  fi
+  log "Update attempt failed; retrying"
+  cat "$OUT/update.err" | tee -a "$REPORT" || true
+  sleep 8
+done
+if [[ "$UPDATE_OK" == 1 ]]; then
   log "Update path: success"
   cat "$OUT/update.txt" | tee -a "$REPORT"
 else
   log "Update path failed"
-  cat "$OUT/update.err" | tee -a "$REPORT"
+  cat "$OUT/update.err" | tee -a "$REPORT" || true
   exit 1
 fi
 
