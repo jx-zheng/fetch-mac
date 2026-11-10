@@ -22,7 +22,8 @@ jobs:
     name: FetchCore
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    container: swift:6
+    # Docker Hub has no swift:6 tag. 6.2 is the current Swift 6 release line.
+    container: swift:6.2
     steps:
       - name: Checkout
         uses: actions/checkout@v4
