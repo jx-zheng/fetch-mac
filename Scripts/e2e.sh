@@ -77,18 +77,34 @@ do
   fi
   log "metadata failed for $candidate"
 done
-if [[ -z "$YOUTUBE_URL" ]]; then
-  log "No YouTube test video could be read"
+MEDIA_URL="$YOUTUBE_URL"
+if [[ -z "$MEDIA_URL" ]]; then
+  log "YouTube asked this runner to sign in. The download and re-encode use a public sample file instead."
+  for candidate in \
+    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" \
+    "https://filesamples.com/samples/video/mp4/sample_640x360.mp4"
+  do
+    if "$BIN" --cli metadata "$candidate" > "$OUT/sample-meta.json" 2>>"$REPORT"; then
+      MEDIA_URL="$candidate"
+      cat "$OUT/sample-meta.json" | tee -a "$REPORT"
+      break
+    fi
+    log "metadata failed for $candidate"
+  done
+else
+  log "Using $YOUTUBE_URL"
+  cat "$OUT/youtube-meta.json" | tee -a "$REPORT"
+fi
+if [[ -z "$MEDIA_URL" ]]; then
+  log "No public video could be read"
   exit 1
 fi
-log "Using $YOUTUBE_URL"
-cat "$OUT/youtube-meta.json" | tee -a "$REPORT"
 
 log ""
-log "YouTube download"
+log "Download $MEDIA_URL"
 ACTIVE="$OUT/active.csv"
 : > "$ACTIVE"
-"$BIN" --cli download "$YOUTUBE_URL" --output "$OUT/full" --format mp4H264 > "$OUT/full.json" 2>"$OUT/full.err" &
+"$BIN" --cli download "$MEDIA_URL" --output "$OUT/full" --format mp4H264 > "$OUT/full.json" 2>"$OUT/full.err" &
 DL_PID=$!
 for _ in $(seq 1 90); do
   if ! kill -0 "$DL_PID" 2>/dev/null; then
@@ -139,7 +155,7 @@ BYTES="$(cat /tmp/fetch-full-bytes)"
 MAX_MB="$(python3 -c "print(f'{max(0.12, ($BYTES/1_000_000)*0.45):.2f}')")"
 log ""
 log "YouTube max-size re-encode at ${MAX_MB} MB"
-"$BIN" --cli download "$YOUTUBE_URL" --output "$OUT/small" --format mp4H264 --max-mb "$MAX_MB" > "$OUT/small.json" 2>"$OUT/small.err"
+"$BIN" --cli download "$MEDIA_URL" --output "$OUT/small" --format mp4H264 --max-mb "$MAX_MB" > "$OUT/small.json" 2>"$OUT/small.err"
 cat "$OUT/small.err" | tee -a "$REPORT"
 cat "$OUT/small.json" | tee -a "$REPORT"
 python3 - "$OUT/small.json" "$MAX_MB" "$FFPROBE" "$REPORT" << 'PY'

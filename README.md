@@ -70,4 +70,5 @@ FETCH_SKIP_UPDATE=1 bash Scripts/e2e.sh
 - Some TikTok `bytevc1` files have no audio. Fetch probes the result and, when that happens, tries an H.264 format that includes audio.
 - Instagram and other private posts need a browser sign-in. Safari cookies on recent macOS often require Full Disk Access for the app.
 - WebM uses a software VP9 encoder. H.264 and HEVC use VideoToolbox, and fall back to libx264 / libx265 if VideoToolbox refuses the file.
+- YouTube sometimes asks a datacenter address to sign in. Fetch then tries the TV, iOS, and mobile web clients. A home connection usually gets the normal web client. If every client asks for a sign-in, use the Safari button on the error. GitHub-hosted runners hit that wall, so the automated download test falls back to a public sample file there while still attempting YouTube.
 - There is no telemetry. Fetch does not phone home except for the download itself, thumbnail images, the daily yt-dlp update check, and the YouTube solver scripts yt-dlp fetches from its own project (`ejs:github` / `ejs:npm`).
