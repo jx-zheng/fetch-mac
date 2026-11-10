@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 @main
@@ -31,17 +30,20 @@ enum FetchEntry {
 struct FetchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model: AppModel
-    @StateObject private var menuBar: MenuBarInsertion
+    @State private var menuBarInserted: Bool
 
     init() {
         let model = AppModel.shared
         _model = StateObject(wrappedValue: model)
-        _menuBar = StateObject(wrappedValue: MenuBarInsertion(model: model))
+        _menuBarInserted = State(initialValue: model.showMenuBar)
     }
 
     var body: some Scene {
         Window("Fetch", id: "main") {
             MainContainer(model: model)
+                .onChange(of: model.showMenuBar) { _, newValue in
+                    if menuBarInserted != newValue { menuBarInserted = newValue }
+                }
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -49,6 +51,9 @@ struct FetchApp: App {
 
         Window("Settings", id: "settings") {
             SettingsView(model: model)
+                .onChange(of: model.showMenuBar) { _, newValue in
+                    if menuBarInserted != newValue { menuBarInserted = newValue }
+                }
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
@@ -59,40 +64,21 @@ struct FetchApp: App {
         .menuBarExtraStyle(.window)
     }
 
-    /// MenuBarExtra writes `isInserted` on every scene update. Writing the same
-    /// value through `@Published` still publishes, which rebuilds the scene and
-    /// writes the binding again. That loop was the launch CPU peg.
+    /// MenuBarExtra writes `isInserted` on every scene update. Writing that
+    /// echo into `showMenuBar` published again, rebuilt the scene, and wrote
+    /// the binding again. That loop pegged a core and grew RSS. `@State`
+    /// ignores an unchanged Bool, and the setter refuses to publish the model.
     private var menuBarBinding: Binding<Bool> {
         Binding(
-            get: { menuBar.inserted },
+            get: { menuBarInserted },
             set: { newValue in
-                guard menuBar.inserted != newValue else { return }
-                menuBar.apply(newValue)
+                guard menuBarInserted != newValue else { return }
+                menuBarInserted = newValue
                 if model.showMenuBar != newValue {
                     model.showMenuBar = newValue
                 }
             }
         )
-    }
-}
-
-/// Menu-bar visibility that does not publish when MenuBarExtra echoes the current value.
-private final class MenuBarInsertion: ObservableObject {
-    @Published private(set) var inserted: Bool
-    private var observation: AnyCancellable?
-
-    init(model: AppModel) {
-        inserted = model.showMenuBar
-        observation = model.$showMenuBar
-            .removeDuplicates()
-            .sink { [weak self] value in
-                self?.apply(value)
-            }
-    }
-
-    func apply(_ value: Bool) {
-        guard inserted != value else { return }
-        inserted = value
     }
 }
 
