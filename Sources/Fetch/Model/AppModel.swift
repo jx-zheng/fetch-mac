@@ -162,7 +162,7 @@ final class AppModel: ObservableObject {
         guard let plan = FormatSelector.plan(input) else { return }
         self.plan = plan
         let next = CardTransition.afterControlEdit(cardPhase)
-        if next == .ready {
+        if next == .ready || cardPhase == .resolving {
             phase = .preview(previewContent(info, plan: plan))
         }
     }
