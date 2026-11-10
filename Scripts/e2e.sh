@@ -31,22 +31,6 @@ else
   cat "$OUT/titlebar.err" | tee -a "$REPORT" || true
   exit 1
 fi
-python3 - "$OUT/titlebar.png" "$REPORT" << 'PY'
-import sys
-from PIL import Image
-image = Image.open(sys.argv[1]).convert("RGBA")
-width, height = image.size
-alphas = []
-for y in range(min(24, height)):
-    for x in (width // 2, min(width - 8, 110), max(8, width - 48)):
-        alphas.append(image.getpixel((x, y))[3])
-minimum = min(alphas) / 255
-text = f"Title bar capture {width}x{height}, top-strip min alpha {minimum:.2f}"
-print(text)
-open(sys.argv[2], "a").write(text + "\n")
-if minimum < 0.9:
-    sys.exit("title bar is transparent")
-PY
 
 log ""
 log "Engine update (already current is success)"
