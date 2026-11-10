@@ -271,8 +271,17 @@ public enum FormatSelector {
         guard let best = audios.max(by: { audioScore($0, container: input.container) < audioScore($1, container: input.container) }) else {
             return nil
         }
-        let compatible = audios.filter { audioMatches($0, container: input.container) }
-        let pool = compatible.isEmpty ? [best] : compatible.sorted { audioScore($0, container: input.container) > audioScore($1, container: input.container) }
+        let underCap = audios.filter { passesBitrate($0, quality: input.quality) }
+        if underCap.isEmpty, input.quality.maxBitrateKbps != nil {
+            var recipe = recipe(input: input, sourceWidth: nil, sourceHeight: nil, fps: nil, sourceBitrate: nil)
+            recipe.audioBitrateKbps = input.quality.maxBitrateKbps ?? recipe.audioBitrateKbps
+            recipe.videoEncoder = nil
+            return audioDownloadPlan(best, input: input, delivery: .transcode(recipe), estimatedBytes: nil)
+        }
+        let considered = underCap.isEmpty ? audios : underCap
+        let compatible = considered.filter { audioMatches($0, container: input.container) }
+        let fallback = considered.max(by: { audioScore($0, container: input.container) < audioScore($1, container: input.container) }) ?? best
+        let pool = compatible.isEmpty ? [fallback] : compatible.sorted { audioScore($0, container: input.container) > audioScore($1, container: input.container) }
 
         if let cap = input.maxBytes, cap > 0 {
             if let fit = pool.first(where: { format in
@@ -282,14 +291,14 @@ public enum FormatSelector {
                 return audioDownloadPlan(fit, input: input, delivery: .streamCopy, estimatedBytes: fit.knownBytes)
             }
             let recipe = recipe(input: input, sourceWidth: nil, sourceHeight: nil, fps: nil, sourceBitrate: nil)
-            return audioDownloadPlan(best, input: input, delivery: .transcode(recipe), estimatedBytes: nil)
+            return audioDownloadPlan(fallback, input: input, delivery: .transcode(recipe), estimatedBytes: nil)
         }
 
         if audioMatches(pool[0], container: input.container) {
             return audioDownloadPlan(pool[0], input: input, delivery: .streamCopy, estimatedBytes: pool[0].knownBytes)
         }
         let recipe = recipe(input: input, sourceWidth: nil, sourceHeight: nil, fps: nil, sourceBitrate: nil)
-        return audioDownloadPlan(best, input: input, delivery: .transcode(recipe), estimatedBytes: best.knownBytes)
+        return audioDownloadPlan(fallback, input: input, delivery: .transcode(recipe), estimatedBytes: fallback.knownBytes)
     }
 
     private static func audioDownloadPlan(
@@ -315,6 +324,13 @@ public enum FormatSelector {
     }
 
     // MARK: - Scoring
+
+    private static func passesBitrate(_ format: MediaFormat, quality: Quality) -> Bool {
+        guard let cap = quality.maxBitrateKbps else { return true }
+        let bitrate = Int((format.abr ?? format.tbr ?? 0).rounded())
+        if bitrate <= 0 { return true }
+        return bitrate <= cap + 8
+    }
 
     private static func passesHeight(_ format: MediaFormat, quality: Quality) -> Bool {
         guard let maxHeight = quality.maxHeight else { return true }
@@ -439,7 +455,8 @@ public enum FormatSelector {
     ) -> TranscodeRecipe {
         let audioOnly = input.container.isAudioOnly
         let duration = input.duration ?? 0
-        let audioKbps = SizeFitMath.audioBitrateKbps(durationSeconds: duration, capBytes: input.maxBytes, audioOnly: audioOnly)
+        let audioKbps = input.quality.maxBitrateKbps
+            ?? SizeFitMath.audioBitrateKbps(durationSeconds: duration, capBytes: input.maxBytes, audioOnly: audioOnly)
         let constrained = (input.maxBytes ?? 0) > 0
         var videoBitrate: Int?
         var scale: Int?

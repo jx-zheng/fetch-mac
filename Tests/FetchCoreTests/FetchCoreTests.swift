@@ -313,6 +313,70 @@ final class FormatSelectorTests: XCTestCase {
         XCTAssertEqual(plan?.needsTranscode, false)
     }
 
+    func testQualityMenuFollowsTheFormatAndTheSource() {
+        XCTAssertEqual(
+            Quality.choices(for: .mp4H264, sourceHeights: [1080, 720, 480]).map(\.title),
+            ["Best", "1080p", "720p", "480p"]
+        )
+        XCTAssertEqual(
+            Quality.choices(for: .mp4H264, sourceHeights: [720]).map(\.title),
+            ["Best", "720p"]
+        )
+        XCTAssertFalse(Quality.choices(for: .webm, sourceHeights: [1080, 720]).contains(.p2160))
+        XCTAssertEqual(
+            Quality.choices(for: .mp3, sourceHeights: [2160, 1080]).map(\.title),
+            ["Best", "320 kbps", "256 kbps", "192 kbps", "128 kbps"]
+        )
+        XCTAssertEqual(Quality.p1080.sanitized(for: .mp3, sourceHeights: [1080]), .best)
+        XCTAssertEqual(Quality.kbps256.sanitized(for: .mp4H264, sourceHeights: [1080, 720]), .best)
+        XCTAssertEqual(Quality.p2160.sanitized(for: .mp4H264, sourceHeights: [1080]), .best)
+        XCTAssertEqual(Quality.p720.sanitized(for: .mov, sourceHeights: [1080, 720, 480]), .p720)
+    }
+
+    func testAudioBitrateChoosesAFormatUnderTheCap() {
+        let formats = [
+            MediaFormat(formatID: "high", ext: "mp3", vcodec: "none", acodec: "mp3", filesize: 4_000_000, abr: 320),
+            MediaFormat(formatID: "low", ext: "mp3", vcodec: "none", acodec: "mp3", filesize: 1_500_000, abr: 128),
+        ]
+        let plan = FormatSelector.plan(SelectionInput(
+            extractorKey: "youtube",
+            duration: 180,
+            formats: formats,
+            container: .mp3,
+            quality: .kbps128,
+            maxBytes: nil
+        ))
+        XCTAssertEqual(plan?.selector, "low")
+        XCTAssertEqual(plan?.needsTranscode, false)
+        XCTAssertEqual(plan?.acodecLabel, "MP3")
+        XCTAssertEqual(plan?.estimatedBytes, 1_500_000)
+    }
+
+    func testAudioBitrateTranscodesWhenNothingIsLowEnough() {
+        let formats = [
+            MediaFormat(formatID: "high", ext: "m4a", vcodec: "none", acodec: "mp4a.40.2", filesize: 3_000_000, abr: 256),
+        ]
+        let plan = FormatSelector.plan(SelectionInput(
+            extractorKey: "youtube",
+            duration: 180,
+            formats: formats,
+            container: .mp3,
+            quality: .kbps128,
+            maxBytes: nil
+        ))
+        XCTAssertEqual(plan?.needsTranscode, true)
+        guard case .transcode(let recipe) = plan?.delivery else { return XCTFail("expected transcode") }
+        XCTAssertEqual(recipe.audioBitrateKbps, 128)
+        XCTAssertNil(recipe.videoEncoder)
+    }
+
+    func testCompletedEditReturnsToReadyWithoutANewFetch() {
+        XCTAssertEqual(CardTransition.afterControlEdit(.completed), .ready)
+        XCTAssertEqual(CardTransition.afterControlEdit(.ready), .ready)
+        XCTAssertEqual(CardTransition.afterControlEdit(.downloading), .downloading)
+        XCTAssertEqual(CardTransition.afterControlEdit(.failed), .failed)
+    }
+
     func testMP3TranscodesFromAAC() {
         let plan = FormatSelector.plan(SelectionInput(
             extractorKey: "youtube",

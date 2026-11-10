@@ -42,3 +42,21 @@ public struct SafariCookieChoice: Equatable, Sendable {
         return use
     }
 }
+
+/// The card after a download, and what a format / quality / size edit does to it.
+public enum CardPhase: Equatable, Sendable {
+    case empty
+    case resolving
+    case ready
+    case downloading
+    case completed
+    case failed
+}
+
+public enum CardTransition {
+    /// Editing format, quality, or the size cap on a finished download returns to the
+    /// ready card for the same link. The info fetch is kept.
+    public static func afterControlEdit(_ phase: CardPhase) -> CardPhase {
+        phase == .completed ? .ready : phase
+    }
+}

@@ -26,6 +26,8 @@ struct MainView: View {
     @Binding var maxSizeText: String
     var phase: ScreenPhase
     var clipboardOffer: String? = nil
+    var sourceHeights: [Int] = []
+    var showsQualityMenu: Bool = false
     var saveName: String
     var dropActive: Bool
     var actions: MainActions
@@ -54,7 +56,16 @@ struct MainView: View {
         }
         .frame(width: 540)
         .fixedSize(horizontal: true, vertical: true)
-        .background(background)
+        .background {
+            background.ignoresSafeArea()
+        }
+        .overlay(alignment: .top) {
+            // The system title strip sits in the safe area above this view.
+            WindowDragRegion()
+                .frame(height: 28)
+                .frame(maxWidth: .infinity)
+                .ignoresSafeArea(edges: .top)
+        }
         .onDrop(of: [.url, .plainText, .fileURL], isTargeted: nil) { providers in
             actions.drop(providers)
         }
@@ -62,16 +73,28 @@ struct MainView: View {
 
     private var background: some View {
         ZStack {
+            titleFill
             WindowBackground()
             (scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.62))
         }
     }
 
+    private var titleFill: Color {
+        scheme == .dark
+            ? Color(red: 0.11, green: 0.11, blue: 0.12)
+            : Color(red: 0.95, green: 0.95, blue: 0.96)
+    }
+
     private var titleBar: some View {
         ZStack {
+            titleFill.allowsHitTesting(false)
+            WindowBackground().allowsHitTesting(false)
+            (scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.62)).allowsHitTesting(false)
+            WindowDragRegion()
             Text("Fetch")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.text)
+                .allowsHitTesting(false)
             HStack {
                 Spacer()
                 Button(action: actions.settings) {
@@ -88,6 +111,7 @@ struct MainView: View {
             .padding(.trailing, 12)
         }
         .frame(height: 46)
+        .frame(maxWidth: .infinity)
     }
 
     private var linkField: some View {
@@ -489,7 +513,7 @@ struct MainView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             labeled("Quality") {
                 Picker("Quality", selection: $quality) {
-                    ForEach(Quality.allCases) { quality in
+                    ForEach(qualityChoices) { quality in
                         Text(quality.title).tag(quality)
                     }
                 }
@@ -497,6 +521,12 @@ struct MainView: View {
                 .pickerStyle(.menu)
                 .disabled(!controlsEnabled)
                 .accessibilityIdentifier("qualityPicker")
+                .overlay(alignment: .bottomLeading) {
+                    if showsQualityMenu {
+                        qualityMenu
+                            .offset(y: -30)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             labeled("Max size") {
@@ -505,7 +535,7 @@ struct MainView: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.small)
-                        .disabled(!controlsEnabled)
+                        .disabled(!controlsEnabled || !allowsMaxSize)
                         .accessibilityIdentifier("maxSizeToggle")
                     HStack {
                         TextField("None", text: $maxSizeText)
@@ -513,7 +543,7 @@ struct MainView: View {
                             .font(.system(size: 13))
                             .multilineTextAlignment(.trailing)
                             .frame(width: 36)
-                            .disabled(!maxSizeEnabled || !controlsEnabled)
+                            .disabled(!maxSizeEnabled || !controlsEnabled || !allowsMaxSize)
                         Text("MB")
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.secondary)
@@ -625,6 +655,39 @@ struct MainView: View {
             startPoint: .top,
             endPoint: .bottom
         )
+    }
+
+    private var qualityChoices: [Quality] {
+        Quality.choices(for: container, sourceHeights: sourceHeights)
+    }
+
+    private var allowsMaxSize: Bool { !container.isAudioOnly }
+
+    private var qualityMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(qualityChoices) { item in
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .opacity(item == quality ? 1 : 0)
+                        .frame(width: 14)
+                    Text(item.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(item == quality ? Color.white : Theme.text)
+                    Spacer(minLength: 12)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(item == quality ? Theme.accent : Color.clear)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(width: 148)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .accessibilityIdentifier("qualityMenu")
     }
 
     private var canDownload: Bool {

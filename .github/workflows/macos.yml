@@ -100,4 +100,6 @@ jobs:
           path: |
             artifacts/report.txt
             artifacts/e2e
+            design/icon-approved.png
+            design/icon-sizes.png
           if-no-files-found: warn

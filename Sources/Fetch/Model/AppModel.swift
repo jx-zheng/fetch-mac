@@ -127,7 +127,6 @@ final class AppModel: ObservableObject {
         if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             info = nil
             plan = nil
-            if case .completed = phase { return }
             phase = .empty
             return
         }
@@ -140,12 +139,33 @@ final class AppModel: ObservableObject {
     }
 
     func refreshPlan() {
+        let nextQuality = quality.sanitized(for: container, sourceHeights: sourceHeights)
+        if nextQuality != quality {
+            quality = nextQuality
+            return
+        }
         guard let info, var input = selectionInput(info) else { return }
-        input.maxBytes = currentCap
+        input.maxBytes = container.isAudioOnly ? nil : currentCap
         guard let plan = FormatSelector.plan(input) else { return }
         self.plan = plan
-        if case .preview = phase {
+        let next = CardTransition.afterControlEdit(cardPhase)
+        if next == .ready {
             phase = .preview(previewContent(info, plan: plan))
+        }
+    }
+
+    var sourceHeights: [Int] {
+        info?.formats.compactMap(\.height).filter { $0 > 0 } ?? []
+    }
+
+    private var cardPhase: CardPhase {
+        switch phase {
+        case .empty: return .empty
+        case .resolving: return .resolving
+        case .preview: return .ready
+        case .downloading: return .downloading
+        case .completed: return .completed
+        case .failed: return .failed
         }
     }
 
@@ -180,7 +200,6 @@ final class AppModel: ObservableObject {
                 }
                 if Task.isCancelled { return }
                 self.phase = .completed(self.completedContent(outcome, cap: cap))
-                self.urlText = ""
                 self.retriedEngine = false
             } catch let failure as EngineFailure {
                 await self.handle(failure, duringDownload: true)

@@ -70,9 +70,16 @@ struct SettingsView: View {
         .fixedSize(horizontal: true, vertical: true)
         .background {
             ZStack {
+                (scheme == .dark ? Color(red: 0.11, green: 0.11, blue: 0.12) : Color(red: 0.95, green: 0.95, blue: 0.96))
                 WindowBackground()
                 (scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.62))
             }
+            .ignoresSafeArea()
+        }
+        .overlay(alignment: .top) {
+            WindowDragRegion()
+                .frame(height: 28)
+                .ignoresSafeArea(edges: .top)
         }
     }
 
@@ -150,7 +157,7 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.text)
                 Spacer()
                 Picker("Quality", selection: $model.quality) {
-                    ForEach(Quality.allCases) { quality in
+                    ForEach(Quality.choices(for: model.container, sourceHeights: model.sourceHeights)) { quality in
                         Text(quality.title).tag(quality)
                     }
                 }

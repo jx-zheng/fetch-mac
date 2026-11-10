@@ -13,6 +13,10 @@ enum FetchEntry {
             AppFlags.launchSample = true
             AppFlags.skipEngineUpdate = true
         }
+        if let index = arguments.firstIndex(of: "--titlebar-check"), arguments.indices.contains(index + 1) {
+            AppFlags.titlebarCheckURL = arguments[index + 1]
+            AppFlags.skipEngineUpdate = true
+        }
         if arguments.contains("--cli") {
             let group = DispatchGroup()
             group.enter()
@@ -95,6 +99,7 @@ struct MainContainer: View {
             maxSizeText: $model.maxSizeText,
             phase: model.phase,
             clipboardOffer: model.clipboardOffer,
+            sourceHeights: model.sourceHeights,
             saveName: model.saveName,
             dropActive: model.dropActive,
             actions: MainActions(
@@ -134,6 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        if let path = AppFlags.titlebarCheckURL {
+            TitlebarCheck.run(saving: URL(fileURLWithPath: path))
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

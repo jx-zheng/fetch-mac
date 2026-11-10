@@ -747,5 +747,6 @@ final class DownloadService: @unchecked Sendable {
 /// Visible to the engine without pulling the UI in. Set before the app starts.
 enum AppFlags {
     static var launchSample = false
+    static var titlebarCheckURL: String?
     static var skipEngineUpdate = ProcessInfo.processInfo.environment["FETCH_SKIP_UPDATE"] == "1"
 }

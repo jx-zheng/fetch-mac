@@ -58,6 +58,10 @@ public enum Quality: String, Codable, CaseIterable, Sendable, Identifiable {
     case p1080
     case p720
     case p480
+    case kbps320
+    case kbps256
+    case kbps192
+    case kbps128
 
     public var id: String { rawValue }
 
@@ -68,18 +72,66 @@ public enum Quality: String, Codable, CaseIterable, Sendable, Identifiable {
         case .p1080: return "1080p"
         case .p720: return "720p"
         case .p480: return "480p"
+        case .kbps320: return "320 kbps"
+        case .kbps256: return "256 kbps"
+        case .kbps192: return "192 kbps"
+        case .kbps128: return "128 kbps"
         }
     }
 
-    /// Tallest frame this quality will accept. Best is uncapped.
+    /// Tallest frame this quality will accept. Best and audio choices are uncapped.
     public var maxHeight: Int? {
         switch self {
-        case .best: return nil
         case .p2160: return 2160
         case .p1080: return 1080
         case .p720: return 720
         case .p480: return 480
+        default: return nil
         }
+    }
+
+    /// Highest audio bitrate this quality will accept. Best and video choices are uncapped.
+    public var maxBitrateKbps: Int? {
+        switch self {
+        case .kbps320: return 320
+        case .kbps256: return 256
+        case .kbps192: return 192
+        case .kbps128: return 128
+        default: return nil
+        }
+    }
+
+    public var isAudio: Bool { maxBitrateKbps != nil }
+
+    /// Menu for the format. Video lists only resolutions the source actually reaches.
+    /// With no source heights yet, the full video ladder stays so a saved choice isn't wiped before preview.
+    public static func choices(for container: ContainerFormat, sourceHeights: [Int]) -> [Quality] {
+        if container.isAudioOnly {
+            return [.best, .kbps320, .kbps256, .kbps192, .kbps128]
+        }
+        let heights = sourceHeights.filter { $0 > 0 }
+        guard let maxHeight = heights.max() else {
+            return [.best, .p2160, .p1080, .p720, .p480]
+        }
+        let ladder: [(Quality, Int, Int)] = [
+            (.p2160, 2160, 1080),
+            (.p1080, 1080, 720),
+            (.p720, 720, 480),
+            (.p480, 480, 0),
+        ]
+        var result: [Quality] = [.best]
+        for (quality, cap, lower) in ladder {
+            guard maxHeight + 16 >= cap else { continue }
+            let offered = heights.contains { $0 <= cap + 16 && $0 > lower }
+            if offered { result.append(quality) }
+        }
+        return result
+    }
+
+    /// A choice that is valid for this format and source. Anything else becomes Best.
+    public func sanitized(for container: ContainerFormat, sourceHeights: [Int]) -> Quality {
+        let menu = Self.choices(for: container, sourceHeights: sourceHeights)
+        return menu.contains(self) ? self : .best
     }
 }
 
