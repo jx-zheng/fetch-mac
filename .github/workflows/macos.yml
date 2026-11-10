@@ -29,6 +29,9 @@ jobs:
       - name: Unit tests
         run: swift test --parallel
 
+      - name: Compile the app
+        run: swift build -c release --product Fetch
+
       - name: Download engines
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

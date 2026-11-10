@@ -61,8 +61,11 @@ public enum URLValidator {
     }
 }
 
-struct IPv4Address: Equatable {
-    var octets: (UInt8, UInt8, UInt8, UInt8)
+struct IPv4Address {
+    var first: UInt8
+    var second: UInt8
+    var third: UInt8
+    var fourth: UInt8
 
     init?(_ text: String) {
         let parts = text.split(separator: ".", omittingEmptySubsequences: false)
@@ -75,21 +78,22 @@ struct IPv4Address: Equatable {
             guard let number = Int(part), (0...255).contains(number) else { return nil }
             values.append(UInt8(number))
         }
-        octets = (values[0], values[1], values[2], values[3])
+        first = values[0]
+        second = values[1]
+        third = values[2]
+        fourth = values[3]
     }
 
     var isNonPublic: Bool {
-        let a = octets.0
-        let b = octets.1
-        if a == 0 || a == 10 || a == 127 { return true }
-        if a == 169 && b == 254 { return true }
-        if a == 172 && (16...31).contains(b) { return true }
-        if a == 192 && b == 168 { return true }
-        if a == 100 && (64...127).contains(b) { return true }
-        if a == 192 && b == 0 && octets.2 == 2 { return true }
-        if a == 198 && b == 51 && octets.2 == 100 { return true }
-        if a == 203 && b == 0 && octets.2 == 113 { return true }
-        if a >= 224 { return true }
+        if first == 0 || first == 10 || first == 127 { return true }
+        if first == 169 && second == 254 { return true }
+        if first == 172 && (16...31).contains(second) { return true }
+        if first == 192 && second == 168 { return true }
+        if first == 100 && (64...127).contains(second) { return true }
+        if first == 192 && second == 0 && third == 2 { return true }
+        if first == 198 && second == 51 && third == 100 { return true }
+        if first == 203 && second == 0 && third == 113 { return true }
+        if first >= 224 { return true }
         return false
     }
 }
