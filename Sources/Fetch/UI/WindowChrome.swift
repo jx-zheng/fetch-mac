@@ -69,10 +69,10 @@ enum TitlebarCheck {
 
             window.hasShadow = false
             window.displayIfNeeded()
-            guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]),
-                  let rep = NSBitmapImageRep(cgImage: image) else {
+            guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else {
                 fail("couldn't capture the window", screenshot)
             }
+            let rep = NSBitmapImageRep(cgImage: image)
             if let png = rep.representation(using: .png, properties: [:]) {
                 try? png.write(to: screenshot)
             }
