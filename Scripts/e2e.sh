@@ -65,13 +65,30 @@ PY
 
 log ""
 log "YouTube metadata"
-"$BIN" --cli metadata "https://www.youtube.com/watch?v=BaW_jenozKc" | tee "$OUT/youtube-meta.json" | tee -a "$REPORT"
+YOUTUBE_URL=""
+for candidate in \
+  "https://www.youtube.com/watch?v=jNQXAC9IVRw" \
+  "https://www.youtube.com/watch?v=C0DPdy98e4c" \
+  "https://www.youtube.com/watch?v=BaW_jenozKc"
+do
+  if "$BIN" --cli metadata "$candidate" > "$OUT/youtube-meta.json" 2>>"$REPORT"; then
+    YOUTUBE_URL="$candidate"
+    break
+  fi
+  log "metadata failed for $candidate"
+done
+if [[ -z "$YOUTUBE_URL" ]]; then
+  log "No YouTube test video could be read"
+  exit 1
+fi
+log "Using $YOUTUBE_URL"
+cat "$OUT/youtube-meta.json" | tee -a "$REPORT"
 
 log ""
 log "YouTube download"
 ACTIVE="$OUT/active.csv"
 : > "$ACTIVE"
-"$BIN" --cli download "https://www.youtube.com/watch?v=BaW_jenozKc" --output "$OUT/full" --format mp4H264 > "$OUT/full.json" 2>"$OUT/full.err" &
+"$BIN" --cli download "$YOUTUBE_URL" --output "$OUT/full" --format mp4H264 > "$OUT/full.json" 2>"$OUT/full.err" &
 DL_PID=$!
 for _ in $(seq 1 90); do
   if ! kill -0 "$DL_PID" 2>/dev/null; then
@@ -122,7 +139,7 @@ BYTES="$(cat /tmp/fetch-full-bytes)"
 MAX_MB="$(python3 -c "print(f'{max(0.12, ($BYTES/1_000_000)*0.45):.2f}')")"
 log ""
 log "YouTube max-size re-encode at ${MAX_MB} MB"
-"$BIN" --cli download "https://www.youtube.com/watch?v=BaW_jenozKc" --output "$OUT/small" --format mp4H264 --max-mb "$MAX_MB" > "$OUT/small.json" 2>"$OUT/small.err"
+"$BIN" --cli download "$YOUTUBE_URL" --output "$OUT/small" --format mp4H264 --max-mb "$MAX_MB" > "$OUT/small.json" 2>"$OUT/small.err"
 cat "$OUT/small.err" | tee -a "$REPORT"
 cat "$OUT/small.json" | tee -a "$REPORT"
 python3 - "$OUT/small.json" "$MAX_MB" "$FFPROBE" "$REPORT" << 'PY'
