@@ -78,6 +78,27 @@ for tool in ffmpeg ffprobe; do
     fi
   done
 done
+# codesign rewrites each binary, so the manifest has to record the signed bytes.
+python3 - "$APP/Contents/Resources" << 'PY'
+import hashlib, json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+manifest = json.loads((root / "engine-manifest.json").read_text())
+
+def digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(path.read_bytes())
+    return hasher.hexdigest()
+
+manifest["binaries"]["yt-dlp"]["universal"] = digest(root / "bin" / "yt-dlp")
+for arch in ("arm64", "x86_64"):
+    for tool in ("ffmpeg", "ffprobe", "deno"):
+        path = root / "bin" / arch / tool
+        if path.exists():
+            manifest["binaries"].setdefault(tool, {})[arch] = digest(path)
+(root / "engine-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+print("refreshed signed engine checksums")
+PY
 sign --options runtime --entitlements Fetch/Fetch.entitlements "$APP/Contents/MacOS/Fetch"
 sign --options runtime --entitlements Fetch/Fetch.entitlements "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
@@ -88,6 +109,7 @@ echo "Smoke: engines start"
 "$HOST_BIN/ffprobe" -version | head -n 1
 "$HOST_BIN/deno" --version
 "$APP/Contents/Resources/bin/yt-dlp" --version
+FETCH_SKIP_UPDATE=1 "$APP/Contents/MacOS/Fetch" --cli version
 
 rm -f "$ROOT/artifacts/Fetch.zip" "$ROOT/artifacts/Fetch.dmg"
 ditto -c -k --keepParent "$APP" "$ROOT/artifacts/Fetch.zip"
