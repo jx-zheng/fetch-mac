@@ -1,5 +1,7 @@
-import CoreFoundation
 import Foundation
+#if canImport(CoreFoundation)
+import CoreFoundation
+#endif
 
 public enum VideoJSONError: Error, Equatable {
     case malformed
@@ -67,21 +69,28 @@ private func string(_ value: Any?) -> String? {
 }
 
 private func int(_ value: Any?) -> Int? {
+    if value is Bool || isJSONBool(value) { return nil }
     if let number = value as? Int { return number }
-    if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
-        return number.intValue
-    }
+    if let number = value as? NSNumber { return number.intValue }
     if let text = value as? String, let number = Int(text) { return number }
     if let number = value as? Double { return Int(number) }
     return nil
 }
 
 private func double(_ value: Any?) -> Double? {
+    if value is Bool || isJSONBool(value) { return nil }
     if let number = value as? Double { return number }
     if let number = value as? Int { return Double(number) }
-    if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() {
-        return number.doubleValue
-    }
+    if let number = value as? NSNumber { return number.doubleValue }
     if let text = value as? String { return Double(text) }
     return nil
+}
+
+private func isJSONBool(_ value: Any?) -> Bool {
+    #if canImport(CoreFoundation)
+    if let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+        return true
+    }
+    #endif
+    return false
 }

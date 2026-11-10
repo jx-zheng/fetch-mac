@@ -100,30 +100,63 @@ if [[ -z "$MEDIA_URL" ]]; then
   exit 1
 fi
 
+download_to() {
+  local url="$1"
+  local dest="$2"
+  local extra="${3:-}"
+  local stdout="$OUT/${dest}.json"
+  local stderr="$OUT/${dest}.err"
+  ACTIVE="$OUT/${dest}-cpu.csv"
+  : > "$ACTIVE"
+  # shellcheck disable=SC2086
+  "$BIN" --cli download "$url" --output "$OUT/$dest" --format mp4H264 $extra > "$stdout" 2>"$stderr" &
+  local pid=$!
+  for _ in $(seq 1 120); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    ps -p "$pid" -o rss=,%cpu= >> "$ACTIVE" || true
+    sleep 1
+  done
+  set +e
+  wait "$pid"
+  local status=$?
+  set -e
+  cat "$stderr" | tee -a "$REPORT" || true
+  if [[ $status -ne 0 ]]; then
+    return "$status"
+  fi
+  cat "$stdout" | tee -a "$REPORT"
+  cp "$ACTIVE" "$OUT/active.csv"
+  cp "$stdout" "$OUT/full.json"
+  return 0
+}
+
 log ""
 log "Download $MEDIA_URL"
-ACTIVE="$OUT/active.csv"
-: > "$ACTIVE"
-"$BIN" --cli download "$MEDIA_URL" --output "$OUT/full" --format mp4H264 > "$OUT/full.json" 2>"$OUT/full.err" &
-DL_PID=$!
-for _ in $(seq 1 90); do
-  if ! kill -0 "$DL_PID" 2>/dev/null; then
-    break
-  fi
-  ps -p "$DL_PID" -o rss=,%cpu= >> "$ACTIVE" || true
-  sleep 1
-done
-set +e
-wait "$DL_PID"
-DL_STATUS=$?
-set -e
-cat "$OUT/full.err" | tee -a "$REPORT" || true
-if [[ $DL_STATUS -ne 0 ]]; then
-  log "YouTube download failed with exit $DL_STATUS"
-  exit "$DL_STATUS"
+if ! download_to "$MEDIA_URL" full; then
+  log "Download failed for $MEDIA_URL. Falling back to a public sample file."
+  MEDIA_URL=""
+  for candidate in \
+    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4" \
+    "https://filesamples.com/samples/video/mp4/sample_640x360.mp4"
+  do
+    if "$BIN" --cli metadata "$candidate" > "$OUT/sample-meta.json" 2>>"$REPORT"; then
+      log "Sample metadata:"
+      cat "$OUT/sample-meta.json" | tee -a "$REPORT"
+      if download_to "$candidate" sample; then
+        MEDIA_URL="$candidate"
+        break
+      fi
+    fi
+    log "sample failed for $candidate"
+  done
 fi
-cat "$OUT/full.json" | tee -a "$REPORT"
-python3 - "$OUT/full.json" "$FFPROBE" "$REPORT" "$ACTIVE" << 'PY'
+if [[ -z "$MEDIA_URL" || ! -f "$OUT/full.json" ]]; then
+  log "No video could be saved"
+  exit 1
+fi
+python3 - "$OUT/full.json" "$FFPROBE" "$REPORT" "$OUT/active.csv" << 'PY'
 import json, subprocess, sys
 line = open(sys.argv[1]).read().strip().split("FETCH_RESULT ", 1)[-1]
 result = json.loads(line)

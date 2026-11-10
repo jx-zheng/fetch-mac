@@ -166,7 +166,24 @@ public enum FormatSelector {
     }
 
     private static func videoPlan(_ input: SelectionInput) -> DownloadPlan? {
-        let formats = input.formats.filter { isSafeFormatID($0.formatID) }
+        let usable = input.formats.filter { isSafeFormatID($0.formatID) }
+        if usable.isEmpty, input.formats.contains(where: \.hasVideo) {
+            // A direct file sometimes has a URL for a format id. "b" asks yt-dlp for its best format
+            // without putting that URL on the -f line.
+            return DownloadPlan(
+                selector: "b",
+                sourceIDs: [],
+                delivery: .streamCopy,
+                noWatermark: false,
+                estimatedBytes: input.formats.compactMap(\.knownBytes).max(),
+                width: input.sourceWidth,
+                height: input.sourceHeight,
+                vcodecLabel: input.container == .mp4HEVC ? "HEVC" : "H.264",
+                acodecLabel: "AAC",
+                fileExtension: input.container.fileExtension
+            )
+        }
+        let formats = usable
         let audio = bestAudio(in: formats, container: input.container)
         var candidates: [Candidate] = []
 

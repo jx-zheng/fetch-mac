@@ -2,16 +2,42 @@ name: macOS
 
 on:
   push:
+    paths:
+      - "Sources/**"
+      - "Tests/**"
+      - "*.xcodeproj/**"
+      - "Package.*"
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "Scripts/**"
+      - "Fetch/**"
   workflow_dispatch:
 
 concurrency:
-  group: fetch-macos-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  core:
+    name: FetchCore
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: swift:6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test FetchCore
+        run: swift test --filter FetchCoreTests
+
+      - name: Build FetchCore
+        run: swift build --target FetchCore
+
   verify:
+    name: macOS
+    needs: core
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 45
     env:
       FETCH_SKIP_UPDATE: "1"
     steps:

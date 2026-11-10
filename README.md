@@ -44,7 +44,7 @@ Clipboard watching reads the pasteboard change count about once a second, and on
 
 ## Develop
 
-The app is a Swift package. Tests for format choice, size math, URLs, file names, errors, and progress parsing do not need the network:
+The app is a Swift package. `FetchCore` (format choice, size math, URLs, file names, errors, progress parsing) builds on Linux with Swift 6. The Mac app target is macOS 14 only. Tests:
 
 ```bash
 swift test

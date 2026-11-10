@@ -246,7 +246,7 @@ final class FormatSelectorTests: XCTestCase {
         XCTAssertEqual(plan?.noWatermark, false)
     }
 
-    func testUnsafeFormatIDsAreIgnored() {
+    func testUnsafeFormatIDsAreNotPassedToTheDownloader() {
         var evil = youtubeFormats[0]
         evil.formatID = "137;rm"
         let plan = FormatSelector.plan(SelectionInput(
@@ -257,7 +257,9 @@ final class FormatSelectorTests: XCTestCase {
             quality: .best,
             maxBytes: nil
         ))
-        XCTAssertNil(plan)
+        XCTAssertEqual(plan?.selector, "b")
+        XCTAssertFalse(plan?.selector.contains(";") ?? true)
+        XCTAssertFalse(plan?.sourceIDs.contains("137;rm") ?? true)
     }
 
     func testAudioOnlyPicksAACForM4A() {
@@ -271,6 +273,19 @@ final class FormatSelectorTests: XCTestCase {
         ))
         XCTAssertEqual(plan?.selector, "140")
         XCTAssertEqual(plan?.fileExtension, "m4a")
+        XCTAssertEqual(plan?.needsTranscode, false)
+    }
+
+    func testUnsafeFormatIDFallsBackToBest() {
+        let plan = FormatSelector.plan(SelectionInput(
+            extractorKey: "generic",
+            duration: 10,
+            formats: [MediaFormat(formatID: "https://cdn.example/video.mp4", ext: "mp4", filesize: 1_000_000)],
+            container: .mp4H264,
+            quality: .best,
+            maxBytes: nil
+        ))
+        XCTAssertEqual(plan?.selector, "b")
         XCTAssertEqual(plan?.needsTranscode, false)
     }
 
