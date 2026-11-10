@@ -410,6 +410,39 @@ final class ErrorMapperTests: XCTestCase {
         XCTAssertEqual(ErrorMapper.map(output: "ERROR: Unsupported URL: https://example.com", exitCode: 1).kind, .unsupported)
     }
 
+    func testUnchangedEngineIsSuccessOnlyWhenTheUpdateExitsZero() {
+        XCTAssertEqual(
+            EngineUpdateVerdicts.judge(exitCode: 0, versionBefore: "2026.10.26", versionAfter: "2026.10.26"),
+            .alreadyCurrent
+        )
+        XCTAssertEqual(
+            EngineUpdateVerdicts.judge(exitCode: 1, versionBefore: "2026.10.26", versionAfter: "2026.10.26"),
+            .rejectedNonZeroExit
+        )
+        XCTAssertEqual(
+            EngineUpdateVerdicts.judge(exitCode: 0, versionBefore: "2026.10.26", versionAfter: "2026.11.01"),
+            .verifyDownloaded
+        )
+        XCTAssertEqual(
+            EngineUpdateVerdicts.judge(exitCode: 1, versionBefore: "2026.10.26", versionAfter: nil),
+            .failed
+        )
+    }
+
+    func testSafariChoiceLastsThroughTheDownload() {
+        var choice = SafariCookieChoice()
+        XCTAssertFalse(choice.allowsInfoFetch())
+        choice.arm()
+        XCTAssertTrue(choice.allowsInfoFetch())
+        XCTAssertTrue(choice.allowsInfoFetch())
+        XCTAssertTrue(choice.takeForDownload())
+        XCTAssertFalse(choice.allowsInfoFetch())
+        XCTAssertFalse(choice.takeForDownload())
+        choice.arm()
+        choice.clear()
+        XCTAssertFalse(choice.takeForDownload())
+    }
+
     func testSafariCookiesNeedFullDiskAccess() {
         let mapped = ErrorMapper.map(
             output: "ERROR: Unable to extract cookies from Safari: [Errno 1] Operation not permitted: '/Users/me/Library/Cookies/Cookies.binarycookies'",

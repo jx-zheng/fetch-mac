@@ -72,6 +72,20 @@ final class DownloadService: @unchecked Sendable {
         process?.stop()
     }
 
+    private func claim(_ runner: ManagedProcess) -> Bool {
+        lock.lock()
+        let alreadyCancelled = cancelled
+        active = runner
+        lock.unlock()
+        return alreadyCancelled
+    }
+
+    private func release(_ runner: ManagedProcess) {
+        lock.lock()
+        if active === runner { active = nil }
+        lock.unlock()
+    }
+
     func fetchInfo(url: URL, cookiesFromBrowser: String?) async throws -> VideoInfo {
         try await retryingYouTubeBotCheck { clients in
             try await self.fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: clients)
@@ -609,19 +623,11 @@ final class DownloadService: @unchecked Sendable {
     ) async throws -> RunResult {
         try throwIfCancelled()
         let runner = ManagedProcess()
-        lock.lock()
-        let alreadyCancelled = cancelled
-        active = runner
-        lock.unlock()
-        if alreadyCancelled {
+        if claim(runner) {
             runner.stop()
             throw EngineFailure(mapped: ErrorMapper.cancelled())
         }
-        defer {
-            lock.lock()
-            if active === runner { active = nil }
-            lock.unlock()
-        }
+        defer { release(runner) }
         let capture = OutputCapture()
         capture.onLine = onLine
         let code: Int32

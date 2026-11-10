@@ -37,7 +37,7 @@ final class AppModel: ObservableObject {
     private var thumbnail: NSImage?
     private var work: Task<Void, Never>?
     private var thumbTask: Task<Void, Never>?
-    private var usingCookies = false
+    private var cookies = SafariCookieChoice()
     private var retriedEngine = false
     private var generation = 0
     private var started = false
@@ -53,8 +53,12 @@ final class AppModel: ObservableObject {
         maxSizeEnabled = storedMaxSize
         maxSizeMB = storedMaxMB
         maxSizeText = storedMaxSize ? String(storedMaxMB) : ""
-        watchClipboard = defaults.object(forKey: Key.clipboard.rawValue) as? Bool ?? false
-        showMenuBar = defaults.object(forKey: Key.menuBar.rawValue) as? Bool ?? true
+        let storedClipboard = defaults.object(forKey: Key.clipboard.rawValue) as? Bool ?? false
+        let storedMenu = defaults.object(forKey: Key.menuBar.rawValue) as? Bool ?? true
+        // Launch measurement turns these on in memory only. didSet does not run
+        // during init, so Kevin's saved settings stay as they were.
+        watchClipboard = AppFlags.launchSample ? true : storedClipboard
+        showMenuBar = AppFlags.launchSample ? true : storedMenu
         if let path = defaults.string(forKey: Key.folder.rawValue) {
             saveDirectory = URL(fileURLWithPath: path, isDirectory: true)
         } else {
@@ -91,10 +95,6 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
-        if AppFlags.launchSample {
-            watchClipboard = true
-            showMenuBar = true
-        }
         configureClipboard()
         Task(priority: .utility) {
             await prepareEngine()
@@ -112,7 +112,7 @@ final class AppModel: ObservableObject {
         info = nil
         plan = nil
         thumbnail = nil
-        usingCookies = false
+        cookies.clear()
         phase = .empty
         work?.cancel()
         service.cancel()
@@ -122,7 +122,7 @@ final class AppModel: ObservableObject {
         guard !isDownloading else { return }
         generation += 1
         let token = generation
-        usingCookies = false
+        cookies.clear()
         clipboardOffer = nil
         if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             info = nil
@@ -158,8 +158,7 @@ final class AppModel: ObservableObject {
         let cap = currentCap
         let container = self.container
         let quality = self.quality
-        let cookies = usingCookies ? "safari" : nil
-        usingCookies = false
+        let useCookies = cookies.takeForDownload()
         let directory = saveDirectory
         phase = .downloading(
             previewContent(info, plan: plan),
@@ -175,7 +174,7 @@ final class AppModel: ObservableObject {
                     quality: quality,
                     maxBytes: cap,
                     outputDirectory: directory,
-                    cookiesFromBrowser: cookies
+                    cookiesFromBrowser: useCookies ? "safari" : nil
                 ) { update in
                     Task { @MainActor in self.apply(update, cap: cap) }
                 }
@@ -203,7 +202,7 @@ final class AppModel: ObservableObject {
         guard case .failed(let problem) = phase else { return }
         switch problem.primary {
         case .safari:
-            usingCookies = true
+            cookies.arm()
             if info == nil { resolveNow() } else { download() }
         case .update:
             Task { await updateAndRetry() }
@@ -334,10 +333,9 @@ final class AppModel: ObservableObject {
             return
         }
         if token != generation { return }
-        let cookies = usingCookies ? "safari" : nil
-        usingCookies = false
+        let useCookies = cookies.allowsInfoFetch()
         do {
-            let info = try await service.fetchInfo(url: url, cookiesFromBrowser: cookies)
+            let info = try await service.fetchInfo(url: url, cookiesFromBrowser: useCookies ? "safari" : nil)
             if token != generation || Task.isCancelled { return }
             guard let plan = FormatSelector.plan(selectionInput(info) ?? SelectionInput(extractorKey: info.extractorKey, duration: info.duration, formats: info.formats, container: container, quality: quality, maxBytes: currentCap)) else {
                 phase = .failed(ProblemCopy.present(MappedError(kind: .noFormats, detail: ""), site: info.siteName, link: raw))
@@ -526,11 +524,7 @@ final class AppModel: ObservableObject {
         thumbTask?.cancel()
         guard let url = info.thumbnailURL, url.scheme == "https" else { return }
         thumbTask = Task { [weak self] in
-            var request = URLRequest(url: url, timeoutInterval: 15)
-            request.cachePolicy = .returnCacheDataElseLoad
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  data.count < 8_000_000,
+            guard let data = try? await ThumbnailLoader().load(url, limit: 8_000_000),
                   let image = NSImage(data: data),
                   image.size.width > 0, image.size.height > 0,
                   image.size.width * image.size.height <= 4096 * 4096 else { return }
@@ -599,6 +593,61 @@ final class AppModel: ObservableObject {
         case .menuBar: defaults.set(showMenuBar, forKey: key.rawValue)
         case .folder: defaults.set(saveDirectory.path, forKey: key.rawValue)
         }
+    }
+}
+
+/// Downloads a thumbnail without keeping it in the shared URL cache, and stops once the body exceeds the cap.
+private final class ThumbnailLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let state = NSLock()
+    private var data = Data()
+    private var tooBig = false
+    private var continuation: CheckedContinuation<Data?, Error>?
+    private var limit = 0
+
+    func load(_ url: URL, limit: Int) async throws -> Data? {
+        self.limit = limit
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            session.dataTask(with: request).resume()
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        state.lock()
+        let overflow = self.data.count + data.count > limit
+        if !overflow { self.data.append(data) }
+        tooBig = tooBig || overflow
+        state.unlock()
+        if overflow { dataTask.cancel() }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        state.lock()
+        let payload = data
+        let rejected = tooBig
+        let continuation = self.continuation
+        self.continuation = nil
+        state.unlock()
+        if rejected {
+            continuation?.resume(returning: nil)
+            return
+        }
+        if let http = task.response as? HTTPURLResponse, http.statusCode != 200 {
+            continuation?.resume(returning: nil)
+            return
+        }
+        if let error, (error as NSError).code != NSURLErrorCancelled {
+            continuation?.resume(throwing: error)
+            return
+        }
+        continuation?.resume(returning: payload)
     }
 }
 

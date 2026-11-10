@@ -106,12 +106,18 @@ actor EngineStore {
             onLine: { _, _ in }
         )
         let after = try? await readVersion(binaries.ytDlp)
-        if let after, !before.isEmpty, after == before {
+        switch EngineUpdateVerdicts.judge(exitCode: code, versionBefore: before, versionAfter: after) {
+        case .alreadyCurrent:
             try? fileManager.removeItem(at: backup)
-            noteUpdate(version: after, channel: channel)
-            return after
+            noteUpdate(version: after ?? before, channel: channel)
+            return after ?? before
+        case .rejectedNonZeroExit, .failed:
+            try? restore(backup, over: binaries.ytDlp)
+            throw EngineStoreError.updateFailed("The engine update didn't finish (exit \(code)).")
+        case .verifyDownloaded:
+            break
         }
-        guard code == 0, let after, !after.isEmpty else {
+        guard let after else {
             try? restore(backup, over: binaries.ytDlp)
             throw EngineStoreError.updateFailed("The engine update didn't finish (exit \(code)).")
         }

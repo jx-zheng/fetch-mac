@@ -33,44 +33,94 @@ else
   exit 1
 fi
 
-log ""
-log "Launch (clipboard watcher and menu bar on, engines prepared from the identity cache)"
-"$BIN" --launch-sample >/tmp/fetch-launch.log 2>&1 &
-LAUNCH_PID=$!
-: > "$OUT/launch.csv"
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
-    log "Launch exited early"
-    cat /tmp/fetch-launch.log | tee -a "$REPORT"
-    exit 1
+measure_launch() {
+  local name="$1"
+  local take_sample="$2"
+  log ""
+  log "Launch $name (clipboard watcher and menu bar on)"
+  "$BIN" --launch-sample >"/tmp/fetch-launch-$name.log" 2>&1 &
+  local pid=$!
+  local csv="$OUT/launch-$name.csv"
+  : > "$csv"
+  local start now elapsed sampled=0 sample_pid=""
+  start=$(date +%s)
+  while true; do
+    now=$(date +%s)
+    elapsed=$((now - start))
+    if (( elapsed >= 30 )); then
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      log "Launch $name exited at ${elapsed}s"
+      cat "/tmp/fetch-launch-$name.log" | tee -a "$REPORT"
+      exit 1
+    fi
+    ps -p "$pid" -o rss=,%cpu= | awk -v t="$elapsed" 'NF >= 2 {print t, $1, $2}' >> "$csv" || true
+    if (( take_sample == 1 && elapsed >= 5 && sampled == 0 )); then
+      sampled=1
+      sample "$pid" 3 > "$OUT/launch-$name.sample.txt" 2>&1 &
+      sample_pid=$!
+    fi
+    sleep 1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  if [[ -n "$sample_pid" ]]; then
+    for _ in 1 2 3 4 5; do
+      if ! kill -0 "$sample_pid" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    kill "$sample_pid" 2>/dev/null || true
+    wait "$sample_pid" 2>/dev/null || true
   fi
-  ps -p "$LAUNCH_PID" -o rss=,%cpu= >> "$OUT/launch.csv"
-  sleep 0.5
-done
-kill "$LAUNCH_PID" 2>/dev/null || true
-wait "$LAUNCH_PID" 2>/dev/null || true
-
-python3 - "$OUT/launch.csv" "$REPORT" << 'PY'
+  python3 - "$csv" "$REPORT" "$name" "$OUT/launch-$name.sample.txt" << 'PY'
 import sys
 rows = []
 for line in open(sys.argv[1]):
     parts = line.split()
-    if len(parts) >= 2:
-        rows.append((int(float(parts[0])), float(parts[1])))
-if not rows:
-    sys.exit("no launch samples")
-rss = [r for r, _ in rows]
-cpu = [c for _, c in rows]
-avg_rss = sum(rss) / len(rss) / 1024
-peak_rss = max(rss) / 1024
-avg_cpu = sum(cpu) / len(cpu)
-peak_cpu = max(cpu)
-text = f"Launch RSS avg {avg_rss:.1f} MB, peak {peak_rss:.1f} MB; CPU avg {avg_cpu:.1f}%, peak {peak_cpu:.1f}% ({len(rows)} samples, clipboard and menu bar on)"
+    if len(parts) >= 3:
+        rows.append((int(parts[0]), int(float(parts[1])), float(parts[2])))
+name = sys.argv[3]
+window = [row for row in rows if 10 <= row[0] < 30]
+if len(window) < 15:
+    sys.exit(f"{name} launch has {len(window)} samples in t=10..30")
+cpus = [cpu for _, _, cpu in window]
+rss = [kb / 1024 for _, kb, _ in window]
+mean_cpu = sum(cpus) / len(cpus)
+growth = rss[-1] - rss[0]
+span = max(rss) - min(rss)
+text = (
+    f"{name} launch t=10..30 mean CPU {mean_cpu:.2f}% (peak {max(cpus):.1f}%); "
+    f"RSS {rss[0]:.1f} -> {rss[-1]:.1f} MB (span {span:.1f} MB); "
+    f"whole-run peak {max(kb for _, kb, _ in rows) / 1024:.1f} MB"
+)
 print(text)
 open(sys.argv[2], "a").write(text + "\n")
-if peak_rss > 150:
-    sys.exit(f"launch RSS peak {peak_rss:.1f} MB is over 150 MB")
+sample_path = sys.argv[4]
+try:
+    sample = open(sample_path, errors="replace").read().splitlines()
+except FileNotFoundError:
+    sample = []
+if sample:
+    interesting = []
+    for i, line in enumerate(sample):
+        if "Call graph" in line or "Heaviest stack" in line or line.strip().startswith("Call graph"):
+            interesting = sample[i:i + 40]
+            break
+    if not interesting:
+        interesting = sample[:40]
+    open(sys.argv[2], "a").write(name + " sample:\n" + "\n".join(interesting) + "\n")
+if mean_cpu > 2:
+    sys.exit(f"{name} mean CPU {mean_cpu:.2f}% between 10s and 30s is over 2%")
+if growth > 8 or span > 15:
+    sys.exit(f"{name} RSS is not flat (growth {growth:.1f} MB, span {span:.1f} MB)")
 PY
+}
+
+measure_launch cold 1
+measure_launch warm 0
 
 log ""
 log "YouTube metadata"
@@ -250,15 +300,28 @@ else
 fi
 
 log ""
-log "Cancel stops the engine process group"
-"$BIN" --cli download "$MEDIA_URL" --output "$OUT/cancel" --limit-rate 80K > "$OUT/cancel.json" 2>"$OUT/cancel.err" &
+log "Cancel during ffmpeg"
+"$BIN" --cli download "$MEDIA_URL" --output "$OUT/cancel" --format webm --limit-rate 400K > "$OUT/cancel.json" 2>"$OUT/cancel.err" &
 CANCEL_PID=$!
-sleep 2
-if ! kill -0 "$CANCEL_PID" 2>/dev/null; then
-  log "Download finished before it could be cancelled"
+SEEN_FFMPEG=0
+for _ in $(seq 1 90); do
+  if pgrep -x ffmpeg >/dev/null; then
+    SEEN_FFMPEG=1
+    break
+  fi
+  if ! kill -0 "$CANCEL_PID" 2>/dev/null; then
+    log "Download ended before ffmpeg started"
+    cat "$OUT/cancel.err" | tee -a "$REPORT" || true
+    exit 1
+  fi
+  sleep 0.5
+done
+if [[ "$SEEN_FFMPEG" != 1 ]]; then
+  log "ffmpeg never started"
   cat "$OUT/cancel.err" | tee -a "$REPORT" || true
   exit 1
 fi
+log "ffmpeg is running; cancelling"
 kill -INT "$CANCEL_PID" 2>/dev/null || true
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if ! kill -0 "$CANCEL_PID" 2>/dev/null; then

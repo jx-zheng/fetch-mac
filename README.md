@@ -48,7 +48,7 @@ The app is a Swift package. `FetchCore` (format choice, size math, URLs, file na
 swift test
 ```
 
-A real app, screenshots, and downloads are built on a Mac by GitHub Actions (`.github/workflows/macos.yml`, `macos-15`). That workflow downloads the arm64 engines, checks their published checksums before signing, builds and ad-hoc signs `Fetch.app`, writes light and dark screenshots, runs the yt-dlp update once, samples launch memory and CPU with the clipboard watcher and menu bar on, downloads a short public video, re-encodes it under a size cap, tries TikTok when the runner can reach it, and cancels a download to confirm yt-dlp and ffmpeg are gone.
+A real app, screenshots, and downloads are built on a Mac by GitHub Actions (`.github/workflows/macos.yml`, `macos-15`). That workflow downloads the arm64 engines, checks their published checksums before signing, builds and ad-hoc signs `Fetch.app`, writes light and dark screenshots, runs the yt-dlp update once, records a 30 second cold launch and a 30 second warm launch with the clipboard watcher and menu bar on, downloads a short public video, re-encodes it under a size cap, tries TikTok when the runner can reach it, and cancels a download while ffmpeg is running.
 
 From a Mac you can do the same locally:
 

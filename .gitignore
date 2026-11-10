@@ -6,3 +6,5 @@ engines/
 .DS_Store
 xcuserdata/
 *.xcuserstate
+
+__pycache__/

@@ -28,6 +28,10 @@ enum ScreenshotHarness {
             ("completed", .dark, AnyView(main(.completed(completed), url: "", max: "50", enabled: true))),
             ("error", .light, AnyView(main(.failed(instagram), url: instagramURL, max: "", enabled: false))),
             ("error", .dark, AnyView(main(.failed(instagram), url: instagramURL, max: "", enabled: false))),
+            ("clipboard", .light, AnyView(main(.empty, url: "", max: "", enabled: false, offer: "https://www.youtube.com/watch?v=BaW_jenozKc"))),
+            ("clipboard", .dark, AnyView(main(.empty, url: "", max: "", enabled: false, offer: "https://www.youtube.com/watch?v=BaW_jenozKc"))),
+            ("fulldisk", .light, AnyView(main(.failed(fullDisk), url: instagramURL, max: "", enabled: false))),
+            ("fulldisk", .dark, AnyView(main(.failed(fullDisk), url: instagramURL, max: "", enabled: false))),
             ("settings", .light, AnyView(settings)),
             ("settings", .dark, AnyView(settings)),
         ]
@@ -142,8 +146,8 @@ enum ScreenshotHarness {
         (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
     }
 
-    private static func main(_ phase: ScreenPhase, url: String, max: String, enabled: Bool) -> some View {
-        Shot(phase: phase, url: url, max: max, enabled: enabled)
+    private static func main(_ phase: ScreenPhase, url: String, max: String, enabled: Bool, offer: String? = nil) -> some View {
+        Shot(phase: phase, url: url, max: max, enabled: enabled, offer: offer)
     }
 
     private static var settings: some View {
@@ -192,6 +196,18 @@ enum ScreenshotHarness {
         CompletedContent(filename: "How a Mechanical Watch Actually Works.mp4", detail: "48.7 MB · 1080p · H.264 · fits under 50 MB", fileURL: nil)
     }
 
+    private static var fullDisk: PresentedProblem {
+        PresentedProblem(
+            title: "Fetch needs Full Disk Access",
+            message: "Safari keeps its sign-in in a protected file. Turn on Full Disk Access for Fetch, then try this one download again. System Settings → Privacy & Security → Full Disk Access.",
+            detail: "Cookies.binarycookies",
+            primaryTitle: "Open Full Disk Access",
+            primary: .fullDiskAccess,
+            secondaryTitle: "Try again",
+            secondary: .retry
+        )
+    }
+
     private static var instagram: PresentedProblem {
         PresentedProblem(
             title: "Instagram needs you signed in",
@@ -212,9 +228,11 @@ private struct Shot: View {
     @State var maxSizeEnabled: Bool
     @State var maxSizeText: String
     var phase: ScreenPhase
+    var offer: String?
 
-    init(phase: ScreenPhase, url: String, max: String, enabled: Bool) {
+    init(phase: ScreenPhase, url: String, max: String, enabled: Bool, offer: String? = nil) {
         self.phase = phase
+        self.offer = offer
         _urlText = State(initialValue: url)
         _maxSizeText = State(initialValue: max)
         _maxSizeEnabled = State(initialValue: enabled)
@@ -228,6 +246,7 @@ private struct Shot: View {
             maxSizeEnabled: $maxSizeEnabled,
             maxSizeText: $maxSizeText,
             phase: phase,
+            clipboardOffer: offer,
             saveName: "Downloads",
             dropActive: false,
             actions: MainActions()

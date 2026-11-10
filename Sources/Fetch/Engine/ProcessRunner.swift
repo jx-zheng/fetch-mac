@@ -25,10 +25,7 @@ final class ManagedProcess: @unchecked Sendable {
         currentDirectory: URL?,
         onLine: @escaping @Sendable (ProcessStream, String) -> Void
     ) async throws -> Int32 {
-        stateLock.lock()
-        let alreadyStopped = didStop
-        stateLock.unlock()
-        if alreadyStopped { throw CancellationError() }
+        if stopWasRequested() { throw CancellationError() }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -87,6 +84,13 @@ final class ManagedProcess: @unchecked Sendable {
         }, onCancel: {
             self.stop()
         })
+    }
+
+    private func stopWasRequested() -> Bool {
+        stateLock.lock()
+        let stopped = didStop
+        stateLock.unlock()
+        return stopped
     }
 
     /// Safe to call before `run`. A cancel that wins the race never starts the child.
