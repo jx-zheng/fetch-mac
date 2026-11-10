@@ -70,10 +70,20 @@ final class DownloadService: @unchecked Sendable {
     }
 
     func fetchInfo(url: URL, cookiesFromBrowser: String?) async throws -> VideoInfo {
+        do {
+            return try await fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: nil)
+        } catch let failure as EngineFailure where failure.mapped.kind == .botCheck {
+            // Datacenter addresses often trip YouTube's web client. The TV and mobile
+            // web clients usually still return the file without a browser sign-in.
+            return try await fetchInfoAttempt(url: url, cookiesFromBrowser: cookiesFromBrowser, youtubeClients: Self.alternateYouTubeClients)
+        }
+    }
+
+    private func fetchInfoAttempt(url: URL, cookiesFromBrowser: String?, youtubeClients: String?) async throws -> VideoInfo {
         resetCancellation()
         try await rejectPrivateResolution(of: url)
         let binaries = try await engine.binaries()
-        var arguments = baseArguments(binaries)
+        var arguments = baseArguments(binaries, youtubeClients: youtubeClients)
         if let cookiesFromBrowser {
             arguments += ["--cookies-from-browser", cookiesFromBrowser]
         }
@@ -102,6 +112,44 @@ final class DownloadService: @unchecked Sendable {
         cookiesFromBrowser: String?,
         onProgress: @escaping @Sendable (DownloadProgressUpdate) -> Void
     ) async throws -> DownloadOutcome {
+        do {
+            return try await downloadAttempt(
+                url: url,
+                info: info,
+                container: container,
+                quality: quality,
+                maxBytes: maxBytes,
+                outputDirectory: outputDirectory,
+                cookiesFromBrowser: cookiesFromBrowser,
+                youtubeClients: nil,
+                onProgress: onProgress
+            )
+        } catch let failure as EngineFailure where failure.mapped.kind == .botCheck {
+            return try await downloadAttempt(
+                url: url,
+                info: info,
+                container: container,
+                quality: quality,
+                maxBytes: maxBytes,
+                outputDirectory: outputDirectory,
+                cookiesFromBrowser: cookiesFromBrowser,
+                youtubeClients: Self.alternateYouTubeClients,
+                onProgress: onProgress
+            )
+        }
+    }
+
+    private func downloadAttempt(
+        url: URL,
+        info: VideoInfo,
+        container: ContainerFormat,
+        quality: Quality,
+        maxBytes: Int?,
+        outputDirectory: URL,
+        cookiesFromBrowser: String?,
+        youtubeClients: String?,
+        onProgress: @escaping @Sendable (DownloadProgressUpdate) -> Void
+    ) async throws -> DownloadOutcome {
         try await rejectPrivateResolution(of: url)
         resetCancellation()
         let plan = FormatSelector.plan(SelectionInput(
@@ -126,6 +174,7 @@ final class DownloadService: @unchecked Sendable {
             maxBytes: maxBytes,
             outputDirectory: outputDirectory,
             cookiesFromBrowser: cookiesFromBrowser,
+            youtubeClients: youtubeClients,
             audioRetry: false,
             onProgress: onProgress
         )
@@ -142,6 +191,7 @@ final class DownloadService: @unchecked Sendable {
         maxBytes: Int?,
         outputDirectory: URL,
         cookiesFromBrowser: String?,
+        youtubeClients: String?,
         audioRetry: Bool,
         onProgress: @escaping @Sendable (DownloadProgressUpdate) -> Void
     ) async throws -> DownloadOutcome {
@@ -157,6 +207,7 @@ final class DownloadService: @unchecked Sendable {
             binaries: binaries,
             directory: temp,
             cookiesFromBrowser: cookiesFromBrowser,
+            youtubeClients: youtubeClients,
             onProgress: onProgress
         )
         guard let source = largestMediaFile(in: temp) else {
@@ -218,6 +269,7 @@ final class DownloadService: @unchecked Sendable {
                     maxBytes: maxBytes,
                     outputDirectory: outputDirectory,
                     cookiesFromBrowser: cookiesFromBrowser,
+                    youtubeClients: youtubeClients,
                     audioRetry: true,
                     onProgress: onProgress
                 )
@@ -256,9 +308,10 @@ final class DownloadService: @unchecked Sendable {
         binaries: EngineBinaries,
         directory: URL,
         cookiesFromBrowser: String?,
+        youtubeClients: String?,
         onProgress: @escaping @Sendable (DownloadProgressUpdate) -> Void
     ) async throws {
-        var arguments = baseArguments(binaries)
+        var arguments = baseArguments(binaries, youtubeClients: youtubeClients)
         arguments += [
             "--progress-template", "download:FETCH\t%(progress.status)s\t%(progress.downloaded_bytes)s\t%(progress.total_bytes)s\t%(progress.total_bytes_estimate)s\t%(progress.speed)s\t%(progress.eta)s",
             "--progress-template", "postprocess:FETCHPP\t%(progress.status)s",
@@ -521,8 +574,10 @@ final class DownloadService: @unchecked Sendable {
         return capture.result(code: code)
     }
 
-    private func baseArguments(_ binaries: EngineBinaries) -> [String] {
-        [
+    private static let alternateYouTubeClients = "tv,web_safari,mweb"
+
+    private func baseArguments(_ binaries: EngineBinaries, youtubeClients: String? = nil) -> [String] {
+        var arguments = [
             "--ignore-config",
             "--no-playlist",
             "--no-warnings",
@@ -535,6 +590,10 @@ final class DownloadService: @unchecked Sendable {
             "--remote-components", "ejs:github",
             "--remote-components", "ejs:npm",
         ]
+        if let youtubeClients {
+            arguments += ["--extractor-args", "youtube:player_client=\(youtubeClients)"]
+        }
+        return arguments
     }
 
     private func rejectPrivateResolution(of url: URL) async throws {
