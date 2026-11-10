@@ -315,7 +315,12 @@ final class DownloadService: @unchecked Sendable {
         while attempt < limit {
             try throwIfCancelled()
             let output = directory.appendingPathComponent("encoded-\(attempt).\(container.fileExtension)")
-            let probeDuration = duration ?? (try await probe(source, binaries: binaries)).duration ?? 0
+            let probeDuration: Double
+            if let duration, duration > 0 {
+                probeDuration = duration
+            } else {
+                probeDuration = try await probe(source, binaries: binaries).duration ?? 0
+            }
             let code = try await runFFmpeg(
                 binaries: binaries,
                 arguments: ffmpegArguments(input: source, output: output, recipe: current, container: container),

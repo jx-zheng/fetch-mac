@@ -47,9 +47,11 @@ final class AppModel: ObservableObject {
         let storedQuality = defaults.string(forKey: Key.quality.rawValue).flatMap(Quality.init(rawValue:)) ?? .best
         container = storedContainer
         quality = storedQuality
-        maxSizeEnabled = defaults.object(forKey: Key.maxSize.rawValue) as? Bool ?? false
-        maxSizeMB = defaults.object(forKey: Key.maxSizeMB.rawValue) as? Int ?? 25
-        maxSizeText = maxSizeEnabled ? String(maxSizeMB) : ""
+        let storedMaxSize = defaults.object(forKey: Key.maxSize.rawValue) as? Bool ?? false
+        let storedMaxMB = defaults.object(forKey: Key.maxSizeMB.rawValue) as? Int ?? 25
+        maxSizeEnabled = storedMaxSize
+        maxSizeMB = storedMaxMB
+        maxSizeText = storedMaxSize ? String(storedMaxMB) : ""
         watchClipboard = defaults.object(forKey: Key.clipboard.rawValue) as? Bool ?? true
         showMenuBar = defaults.object(forKey: Key.menuBar.rawValue) as? Bool ?? true
         if let path = defaults.string(forKey: Key.folder.rawValue) {
