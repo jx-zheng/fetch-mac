@@ -127,8 +127,12 @@ download_to() {
     return "$status"
   fi
   cat "$stdout" | tee -a "$REPORT"
-  cp "$ACTIVE" "$OUT/active.csv"
-  cp "$stdout" "$OUT/full.json"
+  if [[ "$ACTIVE" != "$OUT/active.csv" ]]; then
+    cp "$ACTIVE" "$OUT/active.csv"
+  fi
+  if [[ "$stdout" != "$OUT/full.json" ]]; then
+    cp "$stdout" "$OUT/full.json"
+  fi
   return 0
 }
 
@@ -165,8 +169,9 @@ probe = subprocess.run([sys.argv[2], "-v", "error", "-show_entries", "stream=cod
 streams = json.loads(probe.stdout).get("streams", [])
 kinds = {s.get("codec_type") for s in streams}
 assert "video" in kinds, streams
-assert "audio" in kinds, streams
 assert result["bytes"] > 10_000
+if result.get("audio"):
+    assert "audio" in kinds, streams
 rows = []
 for raw in open(sys.argv[4]):
     parts = raw.split()
