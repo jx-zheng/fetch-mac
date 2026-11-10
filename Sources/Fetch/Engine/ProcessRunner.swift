@@ -157,7 +157,7 @@ final class ManagedProcess: @unchecked Sendable {
         for fd in closeInChild where fd > STDERR_FILENO {
             posix_spawn_file_actions_addclose(&actions, fd)
         }
-        let directory = currentDirectory.map { strdup($0.path) }
+        let directory: UnsafeMutablePointer<CChar>? = currentDirectory.flatMap { strdup($0.path) }
         defer { free(directory) }
         if let directory, posix_spawn_file_actions_addchdir_np(&actions, directory) != 0 {
             throw ProcessLaunchError(description: "Couldn't set the engine working directory.")
