@@ -1,4 +1,5 @@
 import Darwin
+import FetchCore
 import Foundation
 
 struct EngineBinaries: Sendable {
@@ -233,15 +234,15 @@ actor EngineStore {
 
     private func readVersion(_ binary: URL) async throws -> String {
         let runner = ManagedProcess()
-        var lines: [String] = []
+        let lines = VersionLines()
         let code = try await runner.run(
             executable: binary,
             arguments: ["--ignore-config", "--version"],
             environment: ChildEnvironment.make(binDirectory: binary.deletingLastPathComponent()),
             currentDirectory: binary.deletingLastPathComponent(),
-            onLine: { _, line in lines.append(line) }
+            onLine: { _, line in lines.add(line) }
         )
-        let version = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
+        let version = lines.firstNonEmpty()
         guard code == 0, !version.isEmpty else {
             throw EngineStoreError.updateFailed("Couldn't read the engine version.")
         }
@@ -311,5 +312,22 @@ actor EngineStore {
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return "Up to date · checked \(formatter.string(from: date))"
+    }
+}
+
+private final class VersionLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func add(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func firstNonEmpty() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
     }
 }

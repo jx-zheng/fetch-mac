@@ -542,20 +542,10 @@ struct MainView: View {
             .foregroundStyle(canDownload ? Color.white : Theme.tertiary)
             .padding(.horizontal, 16)
             .frame(height: 30)
-            .background(
-                Group {
-                    if canDownload {
-                        LinearGradient(
-                            colors: [Color(red: 0.17, green: 0.55, blue: 1), Color(red: 0.04, green: 0.45, blue: 0.94)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    } else {
-                        Theme.chip
-                    }
-                },
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(canDownload ? AnyShapeStyle(downloadGradient) : AnyShapeStyle(Theme.chip))
+            }
         }
         .buttonStyle(.plain)
         .disabled(!canDownload)
@@ -583,19 +573,21 @@ struct MainView: View {
                 .foregroundStyle(prominent ? Color.white : Theme.text)
                 .padding(.horizontal, 12)
                 .frame(height: 26)
-                .background(
-                    Group {
-                        if prominent {
-                            LinearGradient(colors: [Color(red: 0.17, green: 0.55, blue: 1), Color(red: 0.04, green: 0.45, blue: 0.94)], startPoint: .top, endPoint: .bottom)
-                        } else {
-                            Theme.field.opacity(0.85)
-                        }
-                    },
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                )
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(prominent ? AnyShapeStyle(downloadGradient) : AnyShapeStyle(Theme.field.opacity(0.85)))
+                }
                 .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(prominent ? .clear : Color.primary.opacity(0.12), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+    }
+
+    private var downloadGradient: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 0.17, green: 0.55, blue: 1), Color(red: 0.04, green: 0.45, blue: 0.94)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 
     private var canDownload: Bool {

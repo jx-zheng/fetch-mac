@@ -1,3 +1,4 @@
+import FetchCore
 import Foundation
 
 struct EngineFailure: Error {
@@ -458,6 +459,34 @@ final class DownloadService: @unchecked Sendable {
         var stderr: String
     }
 
+    private final class OutputCapture: @unchecked Sendable {
+        var onLine: (@Sendable (String) -> Void)?
+        private let lock = NSLock()
+        private var stdout = ""
+        private var stderr: [String] = []
+
+        func append(_ stream: ProcessStream, _ line: String) {
+            onLine?(line)
+            lock.lock()
+            defer { lock.unlock() }
+            if stream == .standardOutput {
+                if stdout.utf8.count < 32_000_000 {
+                    stdout += line
+                    stdout += "\n"
+                }
+            } else if !line.hasPrefix("FETCH") {
+                stderr.append(line)
+                if stderr.count > 200 { stderr.removeFirst(stderr.count - 200) }
+            }
+        }
+
+        func result(code: Int32) -> RunResult {
+            lock.lock()
+            defer { lock.unlock() }
+            return RunResult(code: code, stdout: stdout, stderr: stderr.joined(separator: "\n"))
+        }
+    }
+
     private func run(
         _ executable: URL,
         arguments: [String],
@@ -475,30 +504,16 @@ final class DownloadService: @unchecked Sendable {
             if active === runner { active = nil }
             lock.unlock()
         }
-        var stdout = ""
-        var stderrTail: [String] = []
-        let lockLines = NSLock()
+        let capture = OutputCapture()
+        capture.onLine = onLine
         let code = try await runner.run(
             executable: executable,
             arguments: arguments,
             environment: ChildEnvironment.make(binDirectory: binaries.directory),
             currentDirectory: directory,
-            onLine: { stream, line in
-                onLine?(line)
-                lockLines.lock()
-                defer { lockLines.unlock() }
-                if stream == .standardOutput {
-                    if stdout.count < 8_000_000 {
-                        stdout += line
-                        stdout += "\n"
-                    }
-                } else if !line.hasPrefix("FETCH") {
-                    stderrTail.append(line)
-                    if stderrTail.count > 200 { stderrTail.removeFirst(stderrTail.count - 200) }
-                }
-            }
+            onLine: { stream, line in capture.append(stream, line) }
         )
-        return RunResult(code: code, stdout: stdout, stderr: stderrTail.joined(separator: "\n"))
+        return capture.result(code: code)
     }
 
     private func baseArguments(_ binaries: EngineBinaries) -> [String] {

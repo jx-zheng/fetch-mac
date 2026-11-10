@@ -120,19 +120,36 @@ enum CLI {
 
     private static func version(of executable: URL, arguments: [String], directory: URL) async throws -> String {
         let runner = ManagedProcess()
-        var lines: [String] = []
+        let lines = LineBox()
         _ = try await runner.run(
             executable: executable,
             arguments: arguments,
             environment: ChildEnvironment.make(binDirectory: directory),
             currentDirectory: directory,
-            onLine: { _, line in lines.append(line) }
+            onLine: { _, line in lines.add(line) }
         )
-        return lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+        return lines.firstNonEmpty()
     }
 
     private static func json(_ object: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+}
+
+private final class LineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func add(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func firstNonEmpty() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
     }
 }
