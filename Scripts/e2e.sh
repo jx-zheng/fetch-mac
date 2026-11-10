@@ -5,17 +5,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/artifacts/Fetch.app"
 BIN="$APP/Contents/MacOS/Fetch"
-ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64) ENGINE_ARCH=arm64 ;;
-  *) ENGINE_ARCH=x86_64 ;;
-esac
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "Fetch engines are arm64-only"
+  exit 1
+fi
+ENGINE_ARCH=arm64
 FFPROBE="$APP/Contents/Resources/bin/$ENGINE_ARCH/ffprobe"
 OUT="$ROOT/artifacts/e2e"
 REPORT="$ROOT/artifacts/report.txt"
 mkdir -p "$OUT"
 : > "$REPORT"
-export FETCH_SKIP_UPDATE=1
 
 log() { printf '%s\n' "$*" | tee -a "$REPORT"; }
 
@@ -24,43 +23,53 @@ log "Host: $(sw_vers -productVersion) $(uname -m)"
 "$BIN" --cli version | tee -a "$REPORT"
 
 log ""
-log "Idle (window open, no clipboard watcher, no engine work)"
-"$BIN" --idle-benchmark >/tmp/fetch-idle.log 2>&1 &
-IDLE_PID=$!
-sleep 4
-if ! kill -0 "$IDLE_PID" 2>/dev/null; then
-  log "Idle launch failed"
-  cat /tmp/fetch-idle.log | tee -a "$REPORT"
+log "Engine update (already current is success)"
+if "$BIN" --cli update stable > "$OUT/update.txt" 2>"$OUT/update.err"; then
+  log "Update path: success"
+  cat "$OUT/update.txt" | tee -a "$REPORT"
+else
+  log "Update path failed"
+  cat "$OUT/update.err" | tee -a "$REPORT"
   exit 1
 fi
-: > "$OUT/idle.csv"
-for _ in 1 2 3 4 5 6 7 8; do
-  ps -p "$IDLE_PID" -o rss=,%cpu= >> "$OUT/idle.csv"
-  sleep 1
-done
-kill "$IDLE_PID" 2>/dev/null || true
-wait "$IDLE_PID" 2>/dev/null || true
 
-python3 - "$OUT/idle.csv" "$REPORT" << 'PY'
+log ""
+log "Launch (clipboard watcher and menu bar on, engines prepared from the identity cache)"
+"$BIN" --launch-sample >/tmp/fetch-launch.log 2>&1 &
+LAUNCH_PID=$!
+: > "$OUT/launch.csv"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
+    log "Launch exited early"
+    cat /tmp/fetch-launch.log | tee -a "$REPORT"
+    exit 1
+  fi
+  ps -p "$LAUNCH_PID" -o rss=,%cpu= >> "$OUT/launch.csv"
+  sleep 0.5
+done
+kill "$LAUNCH_PID" 2>/dev/null || true
+wait "$LAUNCH_PID" 2>/dev/null || true
+
+python3 - "$OUT/launch.csv" "$REPORT" << 'PY'
 import sys
 rows = []
 for line in open(sys.argv[1]):
     parts = line.split()
     if len(parts) >= 2:
         rows.append((int(float(parts[0])), float(parts[1])))
-# Drop the first three samples; they still include the launch.
-tail = rows[3:] or rows
-rss = [r for r, _ in tail]
-cpu = [c for _, c in tail]
+if not rows:
+    sys.exit("no launch samples")
+rss = [r for r, _ in rows]
+cpu = [c for _, c in rows]
 avg_rss = sum(rss) / len(rss) / 1024
 peak_rss = max(rss) / 1024
 avg_cpu = sum(cpu) / len(cpu)
 peak_cpu = max(cpu)
-text = f"Idle RSS avg {avg_rss:.1f} MB, peak {peak_rss:.1f} MB; CPU avg {avg_cpu:.1f}%, peak {peak_cpu:.1f}% (8s after 4s warmup)"
+text = f"Launch RSS avg {avg_rss:.1f} MB, peak {peak_rss:.1f} MB; CPU avg {avg_cpu:.1f}%, peak {peak_cpu:.1f}% ({len(rows)} samples, clipboard and menu bar on)"
 print(text)
 open(sys.argv[2], "a").write(text + "\n")
-if avg_cpu > 25 or peak_rss > 500:
-    sys.exit("idle resource use is too high")
+if peak_rss > 150:
+    sys.exit(f"launch RSS peak {peak_rss:.1f} MB is over 150 MB")
 PY
 
 log ""
@@ -239,6 +248,37 @@ else
   log "TikTok not completed from this runner (exit $TIKTOK). stderr:"
   cat "$OUT/tiktok.err" | tee -a "$REPORT"
 fi
+
+log ""
+log "Cancel stops the engine process group"
+"$BIN" --cli download "$MEDIA_URL" --output "$OUT/cancel" --limit-rate 80K > "$OUT/cancel.json" 2>"$OUT/cancel.err" &
+CANCEL_PID=$!
+sleep 2
+if ! kill -0 "$CANCEL_PID" 2>/dev/null; then
+  log "Download finished before it could be cancelled"
+  cat "$OUT/cancel.err" | tee -a "$REPORT" || true
+  exit 1
+fi
+kill -INT "$CANCEL_PID" 2>/dev/null || true
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if ! kill -0 "$CANCEL_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if kill -0 "$CANCEL_PID" 2>/dev/null; then
+  log "CLI did not exit after cancel"
+  kill -KILL "$CANCEL_PID" 2>/dev/null || true
+  exit 1
+fi
+wait "$CANCEL_PID" 2>/dev/null || true
+sleep 1
+if pgrep -x yt-dlp >/dev/null || pgrep -x ffmpeg >/dev/null; then
+  log "yt-dlp or ffmpeg still running after cancel"
+  pgrep -lf 'yt-dlp|ffmpeg' | tee -a "$REPORT" || true
+  exit 1
+fi
+log "Cancel test passed: CLI exited and no yt-dlp or ffmpeg was left"
 
 log ""
 log "Done"

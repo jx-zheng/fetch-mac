@@ -26,6 +26,19 @@ public enum URLValidator {
         return raw
     }
 
+    /// Hosts Fetch will offer to save. Anything else on the clipboard is ignored.
+    public static func isSupportedVideoHost(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        let suffixes = [
+            "youtube.com", "youtu.be", "youtube-nocookie.com",
+            "tiktok.com", "instagram.com",
+            "twitter.com", "x.com",
+            "reddit.com", "redd.it",
+            "vimeo.com",
+        ]
+        return suffixes.contains { host == $0 || host.hasSuffix(".\($0)") }
+    }
+
     public static func validate(_ text: String) -> Result<URL, URLValidationError> {
         guard let raw = firstURLString(in: text) else {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

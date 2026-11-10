@@ -30,6 +30,7 @@ enum EngineStoreError: Error {
     case missingBundle
     case checksumMismatch(String)
     case updateFailed(String)
+    case unsupportedArchitecture
 }
 
 actor EngineStore {
@@ -37,6 +38,9 @@ actor EngineStore {
 
     private var cached: EngineBinaries?
     private var versions = EngineVersions(ytDlp: "—", deno: "—", ffmpeg: "—", checkedAt: nil, upToDate: false, status: "Not checked yet")
+    private var updateTask: Task<String, Error>?
+    private var hashCache: [String: HashRecord] = [:]
+    private var hashCacheLoaded = false
     private let fileManager = FileManager.default
 
     func currentVersions() -> EngineVersions { versions }
@@ -67,8 +71,9 @@ actor EngineStore {
             versions.status = checkedPhrase(last)
             return
         }
+        let channel = rememberedChannel()
         do {
-            _ = try await update(channel: "stable")
+            _ = try await update(channel: channel)
         } catch {
             versions.status = "Couldn't check for an update"
         }
@@ -76,7 +81,19 @@ actor EngineStore {
 
     @discardableResult
     func update(channel: String) async throws -> String {
+        let chosen = (channel == "nightly") ? "nightly" : "stable"
+        while let existing = updateTask {
+            _ = try? await existing.value
+        }
+        let task = Task { try await self.performUpdate(channel: chosen) }
+        updateTask = task
+        defer { updateTask = nil }
+        return try await task.value
+    }
+
+    private func performUpdate(channel: String) async throws -> String {
         let binaries = try await prepare()
+        let before = (try? await readVersion(binaries.ytDlp)) ?? readSidecar(named: "yt-dlp.version") ?? ""
         let backup = binaries.ytDlp.appendingPathExtension("bak")
         try? fileManager.removeItem(at: backup)
         try fileManager.copyItem(at: binaries.ytDlp, to: backup)
@@ -88,12 +105,21 @@ actor EngineStore {
             currentDirectory: binaries.directory,
             onLine: { _, _ in }
         )
-        guard code == 0 else {
+        let after = try? await readVersion(binaries.ytDlp)
+        if let after, !before.isEmpty, after == before {
+            try? fileManager.removeItem(at: backup)
+            noteUpdate(version: after, channel: channel)
+            return after
+        }
+        guard code == 0, let after, !after.isEmpty else {
             try? restore(backup, over: binaries.ytDlp)
             throw EngineStoreError.updateFailed("The engine update didn't finish (exit \(code)).")
         }
         do {
-            try await verifyPublishedSum(of: binaries.ytDlp, channel: channel)
+            let digest = try Checksum.sha256Hex(of: binaries.ytDlp)
+            try await verifyPublishedSum(digest, channel: channel)
+            try writeSidecar(digest, named: "yt-dlp.sha256")
+            try writeSidecar(digest, named: "yt-dlp.upstream.sha256")
         } catch {
             try? restore(backup, over: binaries.ytDlp)
             cached = nil
@@ -101,18 +127,28 @@ actor EngineStore {
         }
         try? fileManager.removeItem(at: backup)
         removeQuarantine(binaries.ytDlp)
-        let version = try await readVersion(binaries.ytDlp)
-        try writeSidecar(version, named: "yt-dlp.version")
-        let digest = try Checksum.sha256Hex(of: binaries.ytDlp)
-        try writeSidecar(digest, named: "yt-dlp.sha256")
+        if let installed = readSidecar(named: "yt-dlp.sha256") {
+            rememberHash(of: binaries.ytDlp, sha256: installed)
+        }
+        try writeSidecar(after, named: "yt-dlp.version")
         cached = binaries
+        noteUpdate(version: after, channel: channel)
+        return after
+    }
+
+    private func noteUpdate(version: String, channel: String) {
         let now = Date()
-        UserDefaults.standard.set(now, forKey: "lastEngineCheck")
+        let defaults = UserDefaults.standard
+        defaults.set(now, forKey: "lastEngineCheck")
+        defaults.set(channel, forKey: "engineChannel")
         versions.ytDlp = version
         versions.checkedAt = now
         versions.upToDate = true
         versions.status = checkedPhrase(now)
-        return version
+    }
+
+    private func rememberedChannel() -> String {
+        UserDefaults.standard.string(forKey: "engineChannel") == "nightly" ? "nightly" : "stable"
     }
 
     // MARK: - Install
@@ -126,6 +162,7 @@ actor EngineStore {
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
 
         let arch = currentArch()
+        guard arch == "arm64" else { throw EngineStoreError.unsupportedArchitecture }
         try installStatic(
             name: "ffmpeg",
             source: resourceBin.appendingPathComponent(arch).appendingPathComponent("ffmpeg"),
@@ -147,7 +184,7 @@ actor EngineStore {
         try installYTDLP(
             source: resourceBin.appendingPathComponent("yt-dlp"),
             destination: support.appendingPathComponent("yt-dlp"),
-            expected: manifest.binaries["yt-dlp"]?["universal"],
+            expected: manifest.binaries["yt-dlp"]?["signed"] ?? manifest.binaries["yt-dlp"]?["universal"],
             bundledVersion: manifest.ytDlpVersion,
             forceBundle: replacingSelfUpdate
         )
@@ -162,35 +199,37 @@ actor EngineStore {
 
     private func installStatic(name: String, source: URL, destination: URL, expected: String?) throws {
         guard let expected else { throw EngineStoreError.checksumMismatch(name) }
-        let sourceHash = try Checksum.sha256Hex(of: source)
-        guard sourceHash == expected.lowercased() else { throw EngineStoreError.checksumMismatch(name) }
+        let wanted = expected.lowercased()
+        let sourceHash = try cachedHash(of: source)
+        guard sourceHash == wanted else { throw EngineStoreError.checksumMismatch(name) }
         if fileManager.fileExists(atPath: destination.path) {
-            let current = try? Checksum.sha256Hex(of: destination)
-            if current == expected.lowercased() {
+            let current = try cachedHash(of: destination)
+            if current == wanted {
                 removeQuarantine(destination)
                 return
             }
             try? fileManager.removeItem(at: destination)
         }
         try fileManager.copyItem(at: source, to: destination)
-        let copied = try Checksum.sha256Hex(of: destination)
-        guard copied == expected.lowercased() else {
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+        removeQuarantine(destination)
+        let copied = try cachedHash(of: destination)
+        guard copied == wanted else {
             try? fileManager.removeItem(at: destination)
             throw EngineStoreError.checksumMismatch(name)
         }
-        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
-        removeQuarantine(destination)
         try writeSidecar(copied, named: "\(name).sha256")
     }
 
     private func installYTDLP(source: URL, destination: URL, expected: String?, bundledVersion: String, forceBundle: Bool) throws {
         guard let expected else { throw EngineStoreError.checksumMismatch("yt-dlp") }
-        let sourceHash = try Checksum.sha256Hex(of: source)
-        guard sourceHash == expected.lowercased() else { throw EngineStoreError.checksumMismatch("yt-dlp") }
+        let wanted = expected.lowercased()
+        let sourceHash = try cachedHash(of: source)
+        guard sourceHash == wanted else { throw EngineStoreError.checksumMismatch("yt-dlp") }
 
         if !forceBundle, fileManager.fileExists(atPath: destination.path),
            let sidecar = readSidecar(named: "yt-dlp.sha256") {
-            let current = try Checksum.sha256Hex(of: destination)
+            let current = try cachedHash(of: destination)
             if current == sidecar.lowercased() {
                 removeQuarantine(destination)
                 return
@@ -201,18 +240,83 @@ actor EngineStore {
             try? fileManager.removeItem(at: destination)
         }
         try fileManager.copyItem(at: source, to: destination)
-        let copied = try Checksum.sha256Hex(of: destination)
-        guard copied == expected.lowercased() else {
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
+        removeQuarantine(destination)
+        let copied = try cachedHash(of: destination)
+        guard copied == wanted else {
             try? fileManager.removeItem(at: destination)
             throw EngineStoreError.checksumMismatch("yt-dlp")
         }
-        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
-        removeQuarantine(destination)
         try writeSidecar(copied, named: "yt-dlp.sha256")
         try writeSidecar(bundledVersion, named: "yt-dlp.version")
     }
 
-    private func verifyPublishedSum(of binary: URL, channel: String) async throws {
+    // MARK: - Identity cache
+
+    private func cachedHash(of url: URL) throws -> String {
+        try loadHashCache()
+        let stamp = try fileStamp(url)
+        if let hit = hashCache[url.path],
+           hit.path == stamp.path, hit.size == stamp.size, hit.mtime == stamp.mtime, hit.inode == stamp.inode {
+            return hit.sha256
+        }
+        let digest = try Checksum.sha256Hex(of: url)
+        rememberHash(of: url, sha256: digest, stamp: stamp)
+        return digest
+    }
+
+    private func rememberHash(of url: URL, sha256: String) {
+        guard let stamp = try? fileStamp(url) else { return }
+        rememberHash(of: url, sha256: sha256, stamp: stamp)
+    }
+
+    private func rememberHash(of url: URL, sha256: String, stamp: FileStamp) {
+        hashCache[url.path] = HashRecord(
+            path: stamp.path,
+            size: stamp.size,
+            mtime: stamp.mtime,
+            inode: stamp.inode,
+            sha256: sha256.lowercased()
+        )
+        try? saveHashCache()
+    }
+
+    private func fileStamp(_ url: URL) throws -> FileStamp {
+        var info = stat()
+        guard url.path.withCString({ stat($0, &info) }) == 0 else {
+            throw EngineStoreError.checksumMismatch(url.lastPathComponent)
+        }
+        let mtime = Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec)
+        return FileStamp(
+            path: url.path,
+            size: String(Int64(info.st_size)),
+            mtime: String(mtime),
+            inode: String(info.st_ino)
+        )
+    }
+
+    private func hashCacheURL() throws -> URL {
+        let base = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let directory = base.appendingPathComponent("Fetch", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("engine-hash-cache.json")
+    }
+
+    private func loadHashCache() throws {
+        guard !hashCacheLoaded else { return }
+        hashCacheLoaded = true
+        let url = try hashCacheURL()
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([String: HashRecord].self, from: data) else { return }
+        hashCache = decoded
+    }
+
+    private func saveHashCache() throws {
+        let data = try JSONEncoder().encode(hashCache)
+        try data.write(to: try hashCacheURL(), options: .atomic)
+    }
+
+    private func verifyPublishedSum(_ actual: String, channel: String) async throws {
         let sums = channel == "nightly"
             ? "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/SHA2-256SUMS"
             : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS"
@@ -226,8 +330,7 @@ actor EngineStore {
         guard let text = String(data: data, encoding: .utf8), let expected = Checksum.parseSums(text)["yt-dlp_macos"] else {
             throw EngineStoreError.updateFailed("The published checksum list has no macOS build.")
         }
-        let actual = try Checksum.sha256Hex(of: binary)
-        guard actual == expected else {
+        guard actual.lowercased() == expected else {
             throw EngineStoreError.updateFailed("The updated engine didn't match its published checksum.")
         }
     }
@@ -313,6 +416,21 @@ actor EngineStore {
         formatter.timeStyle = .none
         return "Up to date · checked \(formatter.string(from: date))"
     }
+}
+
+private struct HashRecord: Codable, Equatable {
+    var path: String
+    var size: String
+    var mtime: String
+    var inode: String
+    var sha256: String
+}
+
+private struct FileStamp: Equatable {
+    var path: String
+    var size: String
+    var mtime: String
+    var inode: String
 }
 
 private final class VersionLines: @unchecked Sendable {

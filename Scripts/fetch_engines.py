@@ -99,7 +99,7 @@ def ytdlp(manifest: dict) -> None:
     if not re.match(r"\d{4}\.\d{2}\.\d{2}", version):
         sys.exit(f"unexpected yt-dlp version tag {version}")
     manifest["ytDlpVersion"] = version
-    manifest["binaries"]["yt-dlp"] = {"universal": expected}
+    manifest["binaries"]["yt-dlp"] = {"universal": expected, "upstream": expected}
 
 
 def deno(manifest: dict) -> None:
@@ -111,7 +111,6 @@ def deno(manifest: dict) -> None:
     manifest["binaries"]["deno"] = {}
     mapping = {
         "arm64": "deno-aarch64-apple-darwin.zip",
-        "x86_64": "deno-x86_64-apple-darwin.zip",
     }
     for arch, name in mapping.items():
         archive = OUT / name
@@ -134,7 +133,7 @@ def ffmpeg(manifest: dict) -> None:
     manifest["binaries"]["ffmpeg"] = {}
     manifest["binaries"]["ffprobe"] = {}
     version = None
-    for arch in ("arm64", "amd64"):
+    for arch in ("arm64",):
         key = "x86_64" if arch == "amd64" else "arm64"
         for tool in ("ffmpeg", "ffprobe"):
             match = re.search(rf'href="(/download/macos/{arch}/[^"]+/{tool}\.zip)"', release)

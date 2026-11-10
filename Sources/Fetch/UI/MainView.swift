@@ -14,6 +14,8 @@ struct MainActions {
     var reveal: () -> Void = {}
     var openFile: () -> Void = {}
     var drop: ([NSItemProvider]) -> Bool = { _ in false }
+    var acceptOffer: () -> Void = {}
+    var dismissOffer: () -> Void = {}
 }
 
 struct MainView: View {
@@ -23,6 +25,7 @@ struct MainView: View {
     @Binding var maxSizeEnabled: Bool
     @Binding var maxSizeText: String
     var phase: ScreenPhase
+    var clipboardOffer: String? = nil
     var saveName: String
     var dropActive: Bool
     var actions: MainActions
@@ -34,6 +37,10 @@ struct MainView: View {
             titleBar
             VStack(spacing: 0) {
                 linkField
+                if let clipboardOffer {
+                    clipboardOfferBar(clipboardOffer)
+                        .padding(.top, 8)
+                }
                 content
                     .padding(.top, 14)
                 controls
@@ -128,6 +135,36 @@ struct MainView: View {
                 .strokeBorder(focused ? Theme.accent.opacity(0.35) : .clear, lineWidth: 3.5)
                 .padding(-2)
         )
+    }
+
+    private func clipboardOfferBar(_ offer: String) -> some View {
+        HStack(spacing: 8) {
+            Text("Fetch this?")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text(offer)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Button("Not now", action: actions.dismissOffer)
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.secondary)
+            Button("Fetch", action: actions.acceptOffer)
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Theme.chip, in: Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Fetch this link")
     }
 
     @ViewBuilder private var content: some View {

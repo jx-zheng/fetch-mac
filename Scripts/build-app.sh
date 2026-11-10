@@ -55,30 +55,18 @@ sign() {
   codesign --force --sign - --timestamp=none "$@"
 }
 
-ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64) ENGINE_ARCH=arm64 ;;
-  x86_64) ENGINE_ARCH=x86_64 ;;
-  *) ENGINE_ARCH=arm64 ;;
-esac
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "Fetch engines are arm64-only"
+  exit 1
+fi
+ENGINE_ARCH=arm64
 
-sign --options runtime --entitlements Fetch/deno.entitlements "$APP/Contents/Resources/bin/$ENGINE_ARCH/deno"
-if [[ -f "$APP/Contents/Resources/bin/arm64/deno" && "$ENGINE_ARCH" != "arm64" ]]; then
-  sign --options runtime --entitlements Fetch/deno.entitlements "$APP/Contents/Resources/bin/arm64/deno"
-fi
-if [[ -f "$APP/Contents/Resources/bin/x86_64/deno" && "$ENGINE_ARCH" != "x86_64" ]]; then
-  sign --options runtime --entitlements Fetch/deno.entitlements "$APP/Contents/Resources/bin/x86_64/deno"
-fi
+sign --options runtime --entitlements Fetch/deno.entitlements "$APP/Contents/Resources/bin/arm64/deno"
 sign --options runtime --entitlements Fetch/ytdlp.entitlements "$APP/Contents/Resources/bin/yt-dlp"
 for tool in ffmpeg ffprobe; do
-  for arch in arm64 x86_64; do
-    file="$APP/Contents/Resources/bin/$arch/$tool"
-    if [[ -f "$file" ]]; then
-      sign --options runtime --entitlements Fetch/Fetch.entitlements "$file"
-    fi
-  done
+  sign --options runtime --entitlements Fetch/Fetch.entitlements "$APP/Contents/Resources/bin/arm64/$tool"
 done
-# codesign rewrites each binary, so the manifest has to record the signed bytes.
+# codesign rewrites each binary. Keep the upstream yt-dlp digest and record the signed digest separately.
 python3 - "$APP/Contents/Resources" << 'PY'
 import hashlib, json, sys
 from pathlib import Path
@@ -90,14 +78,16 @@ def digest(path: Path) -> str:
     hasher.update(path.read_bytes())
     return hasher.hexdigest()
 
-manifest["binaries"]["yt-dlp"]["universal"] = digest(root / "bin" / "yt-dlp")
-for arch in ("arm64", "x86_64"):
-    for tool in ("ffmpeg", "ffprobe", "deno"):
-        path = root / "bin" / arch / tool
-        if path.exists():
-            manifest["binaries"].setdefault(tool, {})[arch] = digest(path)
+entry = manifest["binaries"].get("yt-dlp", {})
+upstream = entry.get("upstream") or entry.get("universal")
+signed = digest(root / "bin" / "yt-dlp")
+manifest["binaries"]["yt-dlp"] = {"upstream": upstream, "signed": signed, "universal": signed}
+for tool in ("ffmpeg", "ffprobe", "deno"):
+    path = root / "bin" / "arm64" / tool
+    manifest["binaries"].setdefault(tool, {})
+    manifest["binaries"][tool] = {"arm64": digest(path)}
 (root / "engine-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-print("refreshed signed engine checksums")
+print("recorded upstream and signed engine checksums")
 PY
 sign --options runtime --entitlements Fetch/Fetch.entitlements "$APP/Contents/MacOS/Fetch"
 sign --options runtime --entitlements Fetch/Fetch.entitlements "$APP"
@@ -109,7 +99,7 @@ echo "Smoke: engines start"
 "$HOST_BIN/ffprobe" -version | head -n 1
 "$HOST_BIN/deno" --version
 "$APP/Contents/Resources/bin/yt-dlp" --version
-FETCH_SKIP_UPDATE=1 "$APP/Contents/MacOS/Fetch" --cli version
+"$APP/Contents/MacOS/Fetch" --cli version
 
 rm -f "$ROOT/artifacts/Fetch.zip" "$ROOT/artifacts/Fetch.dmg"
 ditto -c -k --keepParent "$APP" "$ROOT/artifacts/Fetch.zip"

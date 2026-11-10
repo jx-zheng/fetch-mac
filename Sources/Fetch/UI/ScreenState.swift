@@ -36,6 +36,7 @@ struct PresentedProblem: Equatable {
         case safari
         case retry
         case update
+        case fullDiskAccess
     }
 
     var title: String
@@ -128,6 +129,16 @@ enum ProblemCopy {
                 detail: detail,
                 primaryTitle: nil,
                 primary: nil,
+                secondaryTitle: "Try again",
+                secondary: .retry
+            )
+        case .fullDiskAccess:
+            return PresentedProblem(
+                title: "Fetch needs Full Disk Access",
+                message: "Safari keeps its sign-in in a protected file. Turn on Full Disk Access for Fetch, then try this one download again. System Settings → Privacy & Security → Full Disk Access.",
+                detail: detail,
+                primaryTitle: "Open Full Disk Access",
+                primary: .fullDiskAccess,
                 secondaryTitle: "Try again",
                 secondary: .retry
             )

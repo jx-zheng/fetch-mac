@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var showMenuBar: Bool { didSet { persist(.menuBar) } }
     @Published var saveDirectory: URL { didSet { persist(.folder) } }
     @Published var dropActive = false
+    @Published var clipboardOffer: String?
     @Published var engineBusy = false
     @Published var engineStatus = "Not checked yet"
     @Published var ytDlpVersion = "—"
@@ -52,7 +53,7 @@ final class AppModel: ObservableObject {
         maxSizeEnabled = storedMaxSize
         maxSizeMB = storedMaxMB
         maxSizeText = storedMaxSize ? String(storedMaxMB) : ""
-        watchClipboard = defaults.object(forKey: Key.clipboard.rawValue) as? Bool ?? true
+        watchClipboard = defaults.object(forKey: Key.clipboard.rawValue) as? Bool ?? false
         showMenuBar = defaults.object(forKey: Key.menuBar.rawValue) as? Bool ?? true
         if let path = defaults.string(forKey: Key.folder.rawValue) {
             saveDirectory = URL(fileURLWithPath: path, isDirectory: true)
@@ -90,11 +91,16 @@ final class AppModel: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
-        if AppFlags.idleBenchmark { return }
+        if AppFlags.launchSample {
+            watchClipboard = true
+            showMenuBar = true
+        }
         configureClipboard()
-        Task {
+        Task(priority: .utility) {
             await prepareEngine()
-            await engine.maybeDailyUpdate()
+            if !AppFlags.launchSample {
+                await engine.maybeDailyUpdate()
+            }
             await refreshVersions()
         }
     }
@@ -116,6 +122,8 @@ final class AppModel: ObservableObject {
         guard !isDownloading else { return }
         generation += 1
         let token = generation
+        usingCookies = false
+        clipboardOffer = nil
         if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             info = nil
             plan = nil
@@ -151,6 +159,7 @@ final class AppModel: ObservableObject {
         let container = self.container
         let quality = self.quality
         let cookies = usingCookies ? "safari" : nil
+        usingCookies = false
         let directory = saveDirectory
         phase = .downloading(
             previewContent(info, plan: plan),
@@ -198,8 +207,21 @@ final class AppModel: ObservableObject {
             if info == nil { resolveNow() } else { download() }
         case .update:
             Task { await updateAndRetry() }
+        case .fullDiskAccess:
+            openFullDiskAccess()
         default:
             break
+        }
+    }
+
+    private func openFullDiskAccess() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+        ]
+        for raw in urls {
+            guard let url = URL(string: raw) else { continue }
+            if NSWorkspace.shared.open(url) { return }
         }
     }
 
@@ -312,8 +334,10 @@ final class AppModel: ObservableObject {
             return
         }
         if token != generation { return }
+        let cookies = usingCookies ? "safari" : nil
+        usingCookies = false
         do {
-            let info = try await service.fetchInfo(url: url, cookiesFromBrowser: usingCookies ? "safari" : nil)
+            let info = try await service.fetchInfo(url: url, cookiesFromBrowser: cookies)
             if token != generation || Task.isCancelled { return }
             guard let plan = FormatSelector.plan(selectionInput(info) ?? SelectionInput(extractorKey: info.extractorKey, duration: info.duration, formats: info.formats, container: container, quality: quality, maxBytes: currentCap)) else {
                 phase = .failed(ProblemCopy.present(MappedError(kind: .noFormats, detail: ""), site: info.siteName, link: raw))
@@ -381,6 +405,9 @@ final class AppModel: ObservableObject {
         do {
             _ = try await engine.prepare()
             await refreshVersions()
+        } catch EngineStoreError.unsupportedArchitecture {
+            engineStatus = "Apple Silicon only"
+            ytDlpVersion = "—"
         } catch {
             engineStatus = "Missing from the app"
             ytDlpVersion = "—"
@@ -457,9 +484,8 @@ final class AppModel: ObservableObject {
         var parts = [ByteFormatting.precise(outcome.byteCount)]
         if let height = outcome.height, height > 0 { parts.append("\(height)p") }
         if let codec = outcome.videoCodec.map(CodecLabels.video), !codec.isEmpty { parts.append(codec) }
-        if let cap {
+        if cap != nil {
             parts.append(outcome.underCap ? "fits under \(maxSizeMB) MB" : "over \(maxSizeMB) MB")
-            _ = cap
         }
         if !outcome.hasAudio && outcome.hasVideo { parts.append("no audio track") }
         return CompletedContent(filename: outcome.fileURL.lastPathComponent, detail: parts.joined(separator: " · "), fileURL: outcome.fileURL)
@@ -505,7 +531,9 @@ final class AppModel: ObservableObject {
             guard let (data, response) = try? await URLSession.shared.data(for: request),
                   let http = response as? HTTPURLResponse, http.statusCode == 200,
                   data.count < 8_000_000,
-                  let image = NSImage(data: data) else { return }
+                  let image = NSImage(data: data),
+                  image.size.width > 0, image.size.height > 0,
+                  image.size.width * image.size.height <= 4096 * 4096 else { return }
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
@@ -517,21 +545,33 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func offerClipboard(_ url: URL) {
-        guard watchClipboard, !AppFlags.idleBenchmark, !isDownloading else { return }
-        if url.absoluteString == urlText { return }
-        urlText = url.absoluteString
-        if !NSApp.isActive {
-            NSApp.requestUserAttention(.informationalRequest)
-        }
+    func acceptClipboardOffer() {
+        guard let offer = clipboardOffer else { return }
+        clipboardOffer = nil
+        urlText = offer
         resolveNow()
     }
 
+    func dismissClipboardOffer() {
+        clipboardOffer = nil
+    }
+
+    private func offerClipboard(_ url: URL) {
+        guard watchClipboard, !isDownloading else { return }
+        guard URLValidator.isSupportedVideoHost(url) else { return }
+        if url.absoluteString == urlText { return }
+        clipboardOffer = url.absoluteString
+        if !NSApp.isActive {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+    }
+
     private func configureClipboard() {
-        if watchClipboard && !AppFlags.idleBenchmark {
+        if watchClipboard {
             clipboard.start()
         } else {
             clipboard.stop()
+            clipboardOffer = nil
         }
     }
 

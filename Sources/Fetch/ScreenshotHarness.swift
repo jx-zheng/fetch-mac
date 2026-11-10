@@ -10,7 +10,7 @@ enum ScreenshotHarness {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = AppModel.shared
         model.container = .mp4H264
-        model.watchClipboard = true
+        model.watchClipboard = false
         model.showMenuBar = true
         model.ytDlpVersion = "2026.10.26"
         model.denoVersion = "2.9.8"
@@ -242,7 +242,7 @@ private struct SettingsShot: View {
         SettingsView(model: model)
             .onAppear {
                 model.container = .mp4H264
-                model.watchClipboard = true
+                model.watchClipboard = false
                 model.showMenuBar = true
                 model.ytDlpVersion = "2026.10.26"
                 model.denoVersion = "2.9.8"

@@ -9,8 +9,8 @@ enum FetchEntry {
             ScreenshotHarness.run(directory: URL(fileURLWithPath: arguments[index + 1], isDirectory: true))
             return
         }
-        if arguments.contains("--idle-benchmark") {
-            AppFlags.idleBenchmark = true
+        if arguments.contains("--launch-sample") || arguments.contains("--idle-benchmark") {
+            AppFlags.launchSample = true
             AppFlags.skipEngineUpdate = true
         }
         if arguments.contains("--cli") {
@@ -52,8 +52,7 @@ struct FetchApp: App {
     }
 
     private var menuBarBinding: Binding<Bool> {
-        if AppFlags.idleBenchmark { return .constant(false) }
-        return $model.showMenuBar
+        $model.showMenuBar
     }
 }
 
@@ -69,6 +68,7 @@ struct MainContainer: View {
             maxSizeEnabled: $model.maxSizeEnabled,
             maxSizeText: $model.maxSizeText,
             phase: model.phase,
+            clipboardOffer: model.clipboardOffer,
             saveName: model.saveName,
             dropActive: model.dropActive,
             actions: MainActions(
@@ -82,7 +82,9 @@ struct MainContainer: View {
                 secondary: model.secondaryAction,
                 reveal: model.revealCompleted,
                 openFile: model.openCompleted,
-                drop: model.handleDrop
+                drop: model.handleDrop,
+                acceptOffer: model.acceptClipboardOffer,
+                dismissOffer: model.dismissClipboardOffer
             )
         )
         .onChange(of: model.urlText) { _, _ in model.noteTyping() }
@@ -109,6 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        AppFlags.idleBenchmark ? false : !AppModel.shared.showMenuBar
+        !AppModel.shared.showMenuBar
     }
 }

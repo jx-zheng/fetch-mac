@@ -127,29 +127,28 @@ def render(size: int, *, shadow: bool) -> Image.Image:
     """Render one icon. `shadow` adds the macOS-style drop shadow inside the canvas."""
     detail = size >= 128
     tiny = size <= 32
-    # Draw the artwork on a full-bleed squircle. When a shadow is requested
-    # (preview and the installed icon), the squircle is inset so the shadow
-    # sits in the transparent margin — the macOS icon grid.
-    inset = 0.085 if shadow else 0.0
+    # Apple's icon grid: the opaque squircle is 824 px on a 1024 canvas.
+    if shadow:
+        center = (size - 1) / 2.0
+        radius = (824.0 / 1024.0) * size / 2.0
+        inset = 1.0 - (radius / center)
+    else:
+        inset = 0.0
     mask = squircle_mask(size, inset=inset)
 
-    base = linear_gradient(size, (0.055, 0.045, 0.14), (0.045, 0.03, 0.11), 100)
+    base = linear_gradient(size, (0.027, 0.043, 0.11), (0.012, 0.016, 0.05), 112)
     # Deepen the corners.
     y, x = np.ogrid[0:size, 0:size]
     cx = (size - 1) / 2
     vignette = np.sqrt(((x - cx) / (size * 0.62)) ** 2 + ((y - cx) / (size * 0.62)) ** 2)
     vignette = np.clip(vignette, 0, 1)[..., None]
-    base = base * (1.0 - 0.55 * vignette) + np.array((0.02, 0.015, 0.05)) * (0.55 * vignette)
+    base = base * (1.0 - 0.45 * vignette) + np.array((0.008, 0.01, 0.03)) * (0.45 * vignette)
 
-    # Aurora. Positions are fractions of the canvas, matching the reference:
-    # coral sun on the left, magenta through the middle, violet on the right.
+    # Midnight navy with a coral streak and a violet edge, matching the approved reference.
     glows = [
-        (0.30, 0.34, 0.42, 0.50, (1.00, 0.32, 0.28), 0.95, 1.15),
-        (0.22, 0.48, 0.28, 0.36, (1.00, 0.22, 0.48), 0.85, 1.4),
-        (0.42, 0.58, 0.34, 0.42, (0.95, 0.25, 0.62), 0.70, 1.2),
-        (0.62, 0.42, 0.40, 0.46, (0.62, 0.22, 1.00), 0.75, 1.25),
-        (0.74, 0.62, 0.38, 0.42, (0.45, 0.18, 0.95), 0.80, 1.3),
-        (0.50, 0.72, 0.46, 0.30, (0.55, 0.20, 0.85), 0.45, 1.5),
+        (0.30, 0.40, 0.20, 0.24, (1.00, 0.40, 0.32), 0.58, 1.4),
+        (0.46, 0.56, 0.14, 0.18, (0.78, 0.26, 0.52), 0.36, 1.55),
+        (0.70, 0.46, 0.24, 0.28, (0.40, 0.20, 0.90), 0.55, 1.3),
     ]
     for fx, fy, frx, fry, color, strength, power in glows:
         alpha = radial_alpha(size, fx * size, fy * size, frx * size, fry * size, power)
@@ -157,7 +156,7 @@ def render(size: int, *, shadow: bool) -> Image.Image:
 
     # A brighter core where the glass will sit, so the frame reads as lit.
     core = radial_alpha(size, 0.50 * size, 0.50 * size, 0.28 * size, 0.26 * size, 1.6)
-    screen(base, (1.0, 0.55, 0.75), core * 0.35)
+    screen(base, (0.72, 0.55, 0.82), core * 0.08)
 
     rgb = np.clip(base, 0, 1)
     artwork = np.dstack([rgb, np.ones((size, size), dtype=np.float32)])
@@ -266,7 +265,7 @@ def render(size: int, *, shadow: bool) -> Image.Image:
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     shadow_src = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     shadow_alpha = Image.fromarray((mask * 180).astype(np.uint8), mode="L")
-    black = Image.new("RGBA", (size, size), (20, 12, 40, 255))
+    black = Image.new("RGBA", (size, size), (6, 8, 20, 255))
     shadow_src = Image.composite(black, shadow_src, shadow_alpha)
     blur = max(1, int(round(size * 0.035)))
     shadow_src = shadow_src.filter(ImageFilter.GaussianBlur(radius=blur))

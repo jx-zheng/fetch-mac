@@ -1,28 +1,59 @@
 import Foundation
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
 
 public enum Checksum {
     /// Streaming SHA-256, hex encoded. The file is not loaded all at once.
     public static func sha256Hex(of url: URL) throws -> String {
+        #if canImport(CryptoKit)
+        try cryptoKitHex(of: url)
+        #else
+        try portableHex(of: url)
+        #endif
+    }
+
+    public static func sha256Hex(of data: Data) -> String {
+        #if canImport(CryptoKit)
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        #else
+        var hasher = SHA256Hasher()
+        hasher.update(data)
+        return hasher.finalize().hex
+        #endif
+    }
+
+    #if canImport(CryptoKit)
+    /// Hardware SHA-256. Each chunk is drained inside an autorelease pool so a
+    /// large binary does not stay resident as NSData.
+    private static func cryptoKitHex(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var finished = false
+        while !finished {
+            try autoreleasepool {
+                let chunk = try handle.read(upToCount: 1024 * 1024)
+                if let chunk, !chunk.isEmpty {
+                    hasher.update(data: chunk)
+                } else {
+                    finished = true
+                }
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+    #endif
+
+    private static func portableHex(of url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hasher = SHA256Hasher()
         while true {
-            let chunk: Data
-            if let read = try handle.read(upToCount: 1024 * 1024) {
-                chunk = read
-            } else {
-                break
-            }
-            if chunk.isEmpty { break }
+            guard let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty else { break }
             hasher.update(chunk)
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    }
-
-    public static func sha256Hex(of data: Data) -> String {
-        var hasher = SHA256Hasher()
-        hasher.update(data)
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return hasher.finalize().hex
     }
 
     /// Parse a `SHA2-256SUMS` line list. Names may be separated by two spaces or an asterisk.
@@ -144,4 +175,8 @@ struct SHA256Hasher {
     private func rotate(_ value: UInt32, _ bits: UInt32) -> UInt32 {
         (value >> bits) | (value << (32 - bits))
     }
+}
+
+private extension Array where Element == UInt8 {
+    var hex: String { map { String(format: "%02x", $0) }.joined() }
 }

@@ -39,8 +39,6 @@ jobs:
     needs: core
     runs-on: macos-15
     timeout-minutes: 45
-    env:
-      FETCH_SKIP_UPDATE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

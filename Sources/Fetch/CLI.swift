@@ -5,7 +5,7 @@ enum CLI {
     static func run() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
         guard let commandIndex = arguments.firstIndex(of: "--cli"), arguments.indices.contains(commandIndex + 1) else {
-            complain("usage: Fetch --cli version|metadata|download …", 2)
+            complain("usage: Fetch --cli version|metadata|download|update …", 2)
         }
         let command = arguments[commandIndex + 1]
         let rest = Array(arguments.dropFirst(commandIndex + 2))
@@ -43,6 +43,14 @@ enum CLI {
                 print(try json(summary))
             case "download":
                 try await download(rest)
+            case "update":
+                let channel = rest.first ?? "stable"
+                guard channel == "stable" || channel == "nightly" else {
+                    complain("update channel must be stable or nightly", 2)
+                }
+                let version = try await EngineStore.shared.update(channel: channel)
+                print("yt-dlp \(version)")
+                print("UPDATE_OK")
             default:
                 complain("unknown command \(command)", 2)
             }
@@ -65,6 +73,7 @@ enum CLI {
         var maxMB: Double?
         var format = ContainerFormat.mp4H264
         var quality = Quality.best
+        var limitRate: String?
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
@@ -81,6 +90,12 @@ enum CLI {
             case "--quality":
                 index += 1
                 quality = Quality(rawValue: arguments[index]) ?? .best
+            case "--limit-rate":
+                index += 1
+                guard arguments.indices.contains(index), Self.isSafeRate(arguments[index]) else {
+                    complain("limit-rate must be digits with an optional K or M", 2)
+                }
+                limitRate = arguments[index]
             default:
                 if rawURL == nil { rawURL = argument }
             }
@@ -91,6 +106,9 @@ enum CLI {
         }
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let service = DownloadService()
+        service.limitRate = limitRate
+        let interrupt = installInterrupt(service)
+        defer { interrupt.cancel() }
         let info = try await service.fetchInfo(url: url, cookiesFromBrowser: nil)
         let cap = maxMB.map { Int($0 * 1_000_000) }
         let outcome = try await service.download(
@@ -116,6 +134,21 @@ enum CLI {
             "underCap": outcome.underCap,
         ]
         print("FETCH_RESULT \(try json(summary))")
+    }
+
+    private static func isSafeRate(_ value: String) -> Bool {
+        guard (1...8).contains(value.count), let last = value.last else { return false }
+        let digits = last.isNumber ? value : String(value.dropLast())
+        let suffixOK = last.isNumber || last == "K" || last == "M" || last == "k" || last == "m"
+        return suffixOK && !digits.isEmpty && digits.allSatisfy(\.isNumber)
+    }
+
+    private static func installInterrupt(_ service: DownloadService) -> DispatchSourceSignal {
+        signal(SIGINT, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        source.setEventHandler { service.cancel() }
+        source.resume()
+        return source
     }
 
     private static func version(of executable: URL, arguments: [String], directory: URL) async throws -> String {

@@ -8,6 +8,7 @@ public struct MappedError: Equatable, Sendable {
         case engineOutdated
         case unsupported
         case network
+        case fullDiskAccess
         case ageRestricted
         case botCheck
         case noFormats
@@ -40,6 +41,11 @@ public enum ErrorMapper {
 
         if isCancelled(lowered, exitCode: exitCode) {
             return MappedError(kind: .cancelled, detail: detail)
+        }
+        if lowered.contains("cookies.binarycookies")
+            || lowered.contains("full disk access")
+            || (lowered.contains("cookie") && (lowered.contains("operation not permitted") || lowered.contains("permissionerror"))) {
+            return MappedError(kind: .fullDiskAccess, detail: detail)
         }
         if contains(lowered, ["this video is private", "private video", "video is private", "account owner has not", "status code: 403"]) && contains(lowered, ["private"]) {
             return MappedError(kind: .private, detail: detail)

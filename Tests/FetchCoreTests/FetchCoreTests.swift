@@ -20,6 +20,17 @@ final class URLValidatorTests: XCTestCase {
         }
     }
 
+    func testOffersOnlyKnownVideoHosts() {
+        let youtube = URL(string: "https://music.youtube.com/watch?v=abc")!
+        let tiktok = URL(string: "https://vm.tiktok.com/ZSabcd/")!
+        let reddit = URL(string: "https://v.redd.it/abc")!
+        let bank = URL(string: "https://www.bank.example/transfer")!
+        XCTAssertTrue(URLValidator.isSupportedVideoHost(youtube))
+        XCTAssertTrue(URLValidator.isSupportedVideoHost(tiktok))
+        XCTAssertTrue(URLValidator.isSupportedVideoHost(reddit))
+        XCTAssertFalse(URLValidator.isSupportedVideoHost(bank))
+    }
+
     func testExtractsURLFromSurroundingText() {
         let result = URLValidator.validate("look at this https://youtu.be/BaW_jenozKc.")
         guard case .success(let url) = result else { return XCTFail("no url") }
@@ -397,6 +408,16 @@ final class ErrorMapperTests: XCTestCase {
         XCTAssertEqual(ErrorMapper.map(output: "ERROR: Unable to extract player response", exitCode: 1).kind, .engineOutdated)
         XCTAssertTrue(ErrorMapper.map(output: "ERROR: Unable to extract", exitCode: 1).suggestsEngineUpdate)
         XCTAssertEqual(ErrorMapper.map(output: "ERROR: Unsupported URL: https://example.com", exitCode: 1).kind, .unsupported)
+    }
+
+    func testSafariCookiesNeedFullDiskAccess() {
+        let mapped = ErrorMapper.map(
+            output: "ERROR: Unable to extract cookies from Safari: [Errno 1] Operation not permitted: '/Users/me/Library/Cookies/Cookies.binarycookies'",
+            exitCode: 1
+        )
+        XCTAssertEqual(mapped.kind, .fullDiskAccess)
+        let permission = ErrorMapper.map(output: "PermissionError: cookie file operation not permitted", exitCode: 1)
+        XCTAssertEqual(permission.kind, .fullDiskAccess)
     }
 
     func testNetworkCancelledAndGeneric() {

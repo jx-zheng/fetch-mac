@@ -10,6 +10,7 @@ struct MediaProbe: Equatable, Sendable {
     var hasAudio: Bool
     var duration: Double?
     var videoCodec: String?
+    var audioCodec: String?
     var width: Int?
     var height: Int?
 }
@@ -56,6 +57,8 @@ final class DownloadService: @unchecked Sendable {
     private let lock = NSLock()
     private var active: ManagedProcess?
     private var cancelled = false
+    /// Digits with an optional K or M suffix. Passed only as a yt-dlp argument, never through a shell.
+    var limitRate: String?
 
     init(engine: EngineStore = .shared) {
         self.engine = engine
@@ -220,11 +223,19 @@ final class DownloadService: @unchecked Sendable {
         var working = source
         var transcoded = false
         var hardware = false
-        if plan.needsTranscode, let cap = maxBytes, fileSize(source) <= cap, !container.isAudioOnly {
-            if let remuxed = try await remuxIfNeeded(source: source, container: container, binaries: binaries, directory: temp) {
-                working = remuxed
+        if plan.needsTranscode, case .transcode(let recipe) = plan.delivery {
+            let fits = maxBytes.map { fileSize(source) <= $0 } ?? false
+            let probed: MediaProbe?
+            if fits {
+                probed = try await probe(source, binaries: binaries)
+            } else {
+                probed = nil
             }
-        } else if plan.needsTranscode, case .transcode(let recipe) = plan.delivery {
+            if let probed, containerAccepts(probed, container) {
+                if let remuxed = try await remuxIfNeeded(source: source, container: container, binaries: binaries, directory: temp) {
+                    working = remuxed
+                }
+            } else {
             onProgress(DownloadProgressUpdate(stage: .encoding(attempt: 1, hardware: recipe.hardware), fraction: 0, eta: nil, bytesPerSecond: nil))
             let encoded = try await encode(
                 source: source,
@@ -239,6 +250,7 @@ final class DownloadService: @unchecked Sendable {
             working = encoded.file
             transcoded = true
             hardware = encoded.hardware
+            }
         } else if let remuxed = try await remuxIfNeeded(source: source, container: container, binaries: binaries, directory: temp) {
             working = remuxed
         }
@@ -327,6 +339,9 @@ final class DownloadService: @unchecked Sendable {
         }
         if let cookiesFromBrowser {
             arguments += ["--cookies-from-browser", cookiesFromBrowser]
+        }
+        if let limitRate, Self.isSafeRate(limitRate) {
+            arguments += ["--limit-rate", limitRate]
         }
         arguments += ["--", url.absoluteString]
         let result = try await run(binaries.ytDlp, arguments: arguments, directory: directory, binaries: binaries) { line in
@@ -500,11 +515,11 @@ final class DownloadService: @unchecked Sendable {
         )
         guard result.code == 0, let data = result.stdout.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return MediaProbe(hasVideo: false, hasAudio: false, duration: nil, videoCodec: nil, width: nil, height: nil)
+            return MediaProbe(hasVideo: false, hasAudio: false, duration: nil, videoCodec: nil, audioCodec: nil, width: nil, height: nil)
         }
         let streams = object["streams"] as? [[String: Any]] ?? []
         let video = streams.first { ($0["codec_type"] as? String) == "video" }
-        let audio = streams.contains { ($0["codec_type"] as? String) == "audio" }
+        let audioStream = streams.first { ($0["codec_type"] as? String) == "audio" }
         let duration = (object["format"] as? [String: Any]).flatMap { value -> Double? in
             if let text = value["duration"] as? String { return Double(text) }
             if let number = value["duration"] as? NSNumber { return number.doubleValue }
@@ -512,12 +527,41 @@ final class DownloadService: @unchecked Sendable {
         }
         return MediaProbe(
             hasVideo: video != nil,
-            hasAudio: audio,
+            hasAudio: audioStream != nil,
             duration: duration,
             videoCodec: video?["codec_name"] as? String,
+            audioCodec: audioStream?["codec_name"] as? String,
             width: jsonInt(video?["width"]),
             height: jsonInt(video?["height"])
         )
+    }
+
+    /// A size cap can keep a file that is already small, but only when it really is the container we promised.
+    private func containerAccepts(_ probe: MediaProbe, _ container: ContainerFormat) -> Bool {
+        let video = (probe.videoCodec ?? "").lowercased()
+        let audio = (probe.audioCodec ?? "").lowercased()
+        let aac = !probe.hasAudio || audio.hasPrefix("aac") || audio.contains("mp4a")
+        switch container {
+        case .mp4H264, .mov:
+            return (video == "h264" || video.hasPrefix("avc")) && aac
+        case .mp4HEVC:
+            return (video == "hevc" || video.hasPrefix("h265") || video.hasPrefix("hev")) && aac
+        case .mkv:
+            return probe.hasVideo
+        case .webm:
+            return video == "vp9" || video == "vp8" || video.hasPrefix("av1")
+        case .m4a:
+            return !probe.hasVideo && aac
+        case .mp3:
+            return !probe.hasVideo && (audio == "mp3" || audio.contains("mp3"))
+        }
+    }
+
+    private static func isSafeRate(_ value: String) -> Bool {
+        guard (1...8).contains(value.count), let last = value.last else { return false }
+        let suffixOK = last.isNumber || last == "K" || last == "M" || last == "k" || last == "m"
+        let digits = last.isNumber ? value : String(value.dropLast())
+        return suffixOK && !digits.isEmpty && digits.allSatisfy(\.isNumber)
     }
 
     // MARK: - Process
@@ -566,8 +610,13 @@ final class DownloadService: @unchecked Sendable {
         try throwIfCancelled()
         let runner = ManagedProcess()
         lock.lock()
+        let alreadyCancelled = cancelled
         active = runner
         lock.unlock()
+        if alreadyCancelled {
+            runner.stop()
+            throw EngineFailure(mapped: ErrorMapper.cancelled())
+        }
         defer {
             lock.lock()
             if active === runner { active = nil }
@@ -575,13 +624,18 @@ final class DownloadService: @unchecked Sendable {
         }
         let capture = OutputCapture()
         capture.onLine = onLine
-        let code = try await runner.run(
+        let code: Int32
+        do {
+            code = try await runner.run(
             executable: executable,
             arguments: arguments,
             environment: ChildEnvironment.make(binDirectory: binaries.directory),
             currentDirectory: directory,
             onLine: { stream, line in capture.append(stream, line) }
         )
+        } catch is CancellationError {
+            throw EngineFailure(mapped: ErrorMapper.cancelled())
+        }
         return capture.result(code: code)
     }
 
@@ -598,8 +652,6 @@ final class DownloadService: @unchecked Sendable {
             "--socket-timeout", "30",
             "--js-runtimes", "deno:\(binaries.deno.path)",
             "--ffmpeg-location", binaries.directory.path,
-            "--remote-components", "ejs:github",
-            "--remote-components", "ejs:npm",
         ]
         if let youtubeClients {
             arguments += ["--extractor-args", "youtube:player_client=\(youtubeClients)"]
@@ -688,6 +740,6 @@ final class DownloadService: @unchecked Sendable {
 
 /// Visible to the engine without pulling the UI in. Set before the app starts.
 enum AppFlags {
-    static var idleBenchmark = false
+    static var launchSample = false
     static var skipEngineUpdate = ProcessInfo.processInfo.environment["FETCH_SKIP_UPDATE"] == "1"
 }

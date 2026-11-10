@@ -6,14 +6,17 @@ enum ProcessStream: Sendable {
     case standardError
 }
 
-/// Runs a child process with an argument array. There is no shell.
+struct ProcessLaunchError: Error, CustomStringConvertible {
+    var description: String
+}
+
+/// Runs a child in its own process group, with an argument array. There is no shell.
+/// Cancel signals the whole group, including ffmpeg started by yt-dlp.
 final class ManagedProcess: @unchecked Sendable {
-    private let process = Process()
-    private let stdoutPipe = Pipe()
-    private let stderrPipe = Pipe()
     private let stateLock = NSLock()
     private var didResume = false
     private var didStop = false
+    private var pgid: pid_t = 0
 
     func run(
         executable: URL,
@@ -22,46 +25,63 @@ final class ManagedProcess: @unchecked Sendable {
         currentDirectory: URL?,
         onLine: @escaping @Sendable (ProcessStream, String) -> Void
     ) async throws -> Int32 {
-        process.executableURL = executable
-        process.arguments = arguments
-        process.environment = environment
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        process.standardInput = FileHandle.nullDevice
-        if let currentDirectory {
-            process.currentDirectoryURL = currentDirectory
-        }
-        process.qualityOfService = .utility
+        stateLock.lock()
+        let alreadyStopped = didStop
+        stateLock.unlock()
+        if alreadyStopped { throw CancellationError() }
 
-        let outHandle = stdoutPipe.fileHandleForReading
-        let errHandle = stderrPipe.fileHandleForReading
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let outRead = stdoutPipe.fileHandleForReading
+        let errRead = stderrPipe.fileHandleForReading
+        let outWrite = stdoutPipe.fileHandleForWriting
+        let errWrite = stderrPipe.fileHandleForWriting
 
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
-                let group = DispatchGroup()
-                group.enter()
                 DispatchQueue.global(qos: .utility).async {
-                    Self.pump(outHandle, stream: .standardOutput, onLine: onLine)
-                    group.leave()
-                }
-                group.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    Self.pump(errHandle, stream: .standardError, onLine: onLine)
-                    group.leave()
-                }
-                self.process.terminationHandler = { proc in
-                    group.notify(queue: .global(qos: .utility)) {
-                        self.finish(.success(proc.terminationStatus), continuation)
+                    do {
+                        let pid = try self.spawn(
+                            executable: executable,
+                            arguments: arguments,
+                            environment: environment,
+                            currentDirectory: currentDirectory,
+                            stdout: outWrite.fileDescriptor,
+                            stderr: errWrite.fileDescriptor,
+                            closeInChild: [outRead.fileDescriptor, errRead.fileDescriptor, outWrite.fileDescriptor, errWrite.fileDescriptor]
+                        )
+                        try? outWrite.close()
+                        try? errWrite.close()
+                        self.stateLock.lock()
+                        self.pgid = pid
+                        let stopNow = self.didStop
+                        self.stateLock.unlock()
+                        if stopNow {
+                            self.signalGroup(pid)
+                        }
+                        let group = DispatchGroup()
+                        group.enter()
+                        DispatchQueue.global(qos: .utility).async {
+                            Self.pump(outRead, stream: .standardOutput, onLine: onLine)
+                            group.leave()
+                        }
+                        group.enter()
+                        DispatchQueue.global(qos: .utility).async {
+                            Self.pump(errRead, stream: .standardError, onLine: onLine)
+                            group.leave()
+                        }
+                        var status: Int32 = 0
+                        while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+                        group.wait()
+                        let code = Self.exitCode(status)
+                        self.finish(.success(code), continuation)
+                    } catch {
+                        try? outRead.close()
+                        try? errRead.close()
+                        try? outWrite.close()
+                        try? errWrite.close()
+                        self.finish(.failure(error), continuation)
                     }
-                }
-                do {
-                    try self.process.run()
-                    try? self.stdoutPipe.fileHandleForWriting.close()
-                    try? self.stderrPipe.fileHandleForWriting.close()
-                } catch {
-                    try? outHandle.close()
-                    try? errHandle.close()
-                    self.finish(.failure(error), continuation)
                 }
             }
         }, onCancel: {
@@ -69,19 +89,116 @@ final class ManagedProcess: @unchecked Sendable {
         })
     }
 
+    /// Safe to call before `run`. A cancel that wins the race never starts the child.
     func stop() {
         stateLock.lock()
         let already = didStop
         didStop = true
+        let group = pgid
         stateLock.unlock()
         guard !already else { return }
-        guard process.isRunning else { return }
-        let pid = process.processIdentifier
-        kill(pid, SIGINT)
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self, self.process.isRunning else { return }
-            ProcessTree.terminate(pid)
+        guard group > 1 else { return }
+        signalGroup(group)
+    }
+
+    private func signalGroup(_ group: pid_t) {
+        guard group > 1 else { return }
+        kill(-group, SIGINT)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.5) {
+            kill(-group, SIGKILL)
         }
+    }
+
+    private func spawn(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        currentDirectory: URL?,
+        stdout: Int32,
+        stderr: Int32,
+        closeInChild: [Int32]
+    ) throws -> pid_t {
+        stateLock.lock()
+        let stopped = didStop
+        stateLock.unlock()
+        if stopped { throw CancellationError() }
+
+        var actions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else {
+            throw ProcessLaunchError(description: "Couldn't prepare the engine process.")
+        }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+
+        var attr: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attr) == 0 else {
+            throw ProcessLaunchError(description: "Couldn't prepare the engine process.")
+        }
+        defer { posix_spawnattr_destroy(&attr) }
+
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF)
+        posix_spawnattr_setflags(&attr, flags)
+        var group: pid_t = 0
+        posix_spawnattr_setpgroup(&attr, group)
+        var defaults = sigset_t()
+        sigemptyset(&defaults)
+        sigaddset(&defaults, SIGINT)
+        sigaddset(&defaults, SIGTERM)
+        posix_spawnattr_setsigdefault(&attr, &defaults)
+
+        let devnull = open("/dev/null", O_RDONLY)
+        if devnull < 0 {
+            throw ProcessLaunchError(description: "Couldn't open a standard input for the engine.")
+        }
+        defer { close(devnull) }
+        posix_spawn_file_actions_adddup2(&actions, stdout, STDOUT_FILENO)
+        posix_spawn_file_actions_adddup2(&actions, stderr, STDERR_FILENO)
+        posix_spawn_file_actions_adddup2(&actions, devnull, STDIN_FILENO)
+        posix_spawn_file_actions_addclose(&actions, devnull)
+        for fd in closeInChild where fd > STDERR_FILENO {
+            posix_spawn_file_actions_addclose(&actions, fd)
+        }
+        let directory = currentDirectory.map { strdup($0.path) }
+        defer { free(directory) }
+        if let directory, posix_spawn_file_actions_addchdir_np(&actions, directory) != 0 {
+            throw ProcessLaunchError(description: "Couldn't set the engine working directory.")
+        }
+
+        var argvCopies = ([executable.path] + arguments).map { strdup($0) }
+        defer { argvCopies.forEach { free($0) } }
+        var argv: [UnsafeMutablePointer<CChar>?] = argvCopies
+        argv.append(nil)
+        var envCopies = environment.map { strdup("\($0.key)=\($0.value)") }
+        defer { envCopies.forEach { free($0) } }
+        var envp: [UnsafeMutablePointer<CChar>?] = envCopies
+        envp.append(nil)
+
+        var pid: pid_t = 0
+        let rc: Int32 = try executable.path.withCString { path in
+            try argv.withUnsafeMutableBufferPointer { argvBuf in
+                try envp.withUnsafeMutableBufferPointer { envBuf in
+                    guard let argvPtr = argvBuf.baseAddress, let envPtr = envBuf.baseAddress else {
+                        throw ProcessLaunchError(description: "Couldn't start the engine.")
+                    }
+                    return posix_spawn(&pid, path, &actions, &attr, argvPtr, envPtr)
+                }
+            }
+        }
+        if rc != 0 {
+            throw ProcessLaunchError(description: "Couldn't start the engine (\(String(cString: strerror(rc)))).")
+        }
+        stateLock.lock()
+        let stopNow = didStop
+        stateLock.unlock()
+        if stopNow {
+            kill(-pid, SIGINT)
+            kill(-pid, SIGKILL)
+        }
+        return pid
+    }
+
+    private static func exitCode(_ status: Int32) -> Int32 {
+        if status & 0x7f == 0 { return (status >> 8) & 0xff }
+        return status & 0x7f
     }
 
     private func finish(_ result: Result<Int32, Error>, _ continuation: CheckedContinuation<Int32, Error>) {
@@ -123,32 +240,6 @@ final class ManagedProcess: @unchecked Sendable {
         }
     }
 }
-
-enum ProcessTree {
-    static func terminate(_ pid: pid_t) {
-        for child in childPIDs(of: pid) {
-            terminate(child)
-        }
-        kill(pid, SIGKILL)
-    }
-
-    private static func childPIDs(of pid: pid_t) -> [pid_t] {
-        let capacity = 256
-        var buffer = [pid_t](repeating: 0, count: capacity)
-        let returned = buffer.withUnsafeMutableBytes { raw in
-            Int(proc_listchildpids(pid, raw.baseAddress, Int32(raw.count)))
-        }
-        // libproc has shipped both a pid count and a byte count. The buffer is
-        // zeroed, and pid 0 is never a child worth signalling (kill(0) hits the
-        // process group), so either reading is safe after this filter.
-        guard returned > 0 else { return [] }
-        let count = returned <= capacity ? returned : returned / MemoryLayout<pid_t>.size
-        return buffer.prefix(min(count, capacity)).filter { $0 > 1 }
-    }
-}
-
-@_silgen_name("proc_listchildpids")
-private func proc_listchildpids(_ ppid: Int32, _ buffer: UnsafeMutableRawPointer?, _ buffersize: Int32) -> Int32
 
 enum ChildEnvironment {
     static func make(binDirectory: URL) -> [String: String] {
