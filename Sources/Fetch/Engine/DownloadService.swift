@@ -368,15 +368,23 @@ final class DownloadService: @unchecked Sendable {
         var hardware = recipe.hardware
         var attempt = 0
         let limit = 4
+        let knownDuration: Double
+        if let duration, duration > 0.25 {
+            knownDuration = duration
+        } else {
+            knownDuration = try await probe(source, binaries: binaries).duration ?? 0
+        }
+        if let maxBytes, maxBytes > 0, knownDuration > 0.25 {
+            current.videoBitrateKbps = SizeFitMath.videoBitrateKbps(
+                capBytes: maxBytes,
+                durationSeconds: knownDuration,
+                audioKbps: current.audioBitrateKbps
+            )
+        }
         while attempt < limit {
             try throwIfCancelled()
             let output = directory.appendingPathComponent("encoded-\(attempt).\(container.fileExtension)")
-            let probeDuration: Double
-            if let duration, duration > 0 {
-                probeDuration = duration
-            } else {
-                probeDuration = try await probe(source, binaries: binaries).duration ?? 0
-            }
+            let probeDuration = knownDuration
             let code = try await runFFmpeg(
                 binaries: binaries,
                 arguments: ffmpegArguments(input: source, output: output, recipe: current, container: container),

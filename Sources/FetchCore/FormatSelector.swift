@@ -470,7 +470,9 @@ public enum FormatSelector {
 
     private static func isH264(_ format: MediaFormat) -> Bool {
         let value = (format.vcodec ?? "").lowercased()
-        return value.hasPrefix("avc") || value.hasPrefix("h264")
+        if value.hasPrefix("avc") || value.hasPrefix("h264") { return true }
+        // A direct MP4 with no reported codec is almost always H.264.
+        return value.isEmpty && ["mp4", "mov", "m4v"].contains(format.ext.lowercased())
     }
 
     private static func isHEVC(_ format: MediaFormat) -> Bool {
@@ -485,7 +487,8 @@ public enum FormatSelector {
 
     private static func isAAC(_ format: MediaFormat) -> Bool {
         let value = (format.acodec ?? "").lowercased()
-        return value.hasPrefix("aac") || value.contains("mp4a")
+        if value.hasPrefix("aac") || value.contains("mp4a") { return true }
+        return value.isEmpty && ["mp4", "mov", "m4a", "m4v"].contains(format.ext.lowercased())
     }
 
     private static func isOpusOrVorbis(_ format: MediaFormat) -> Bool {

@@ -139,12 +139,16 @@ public struct MediaFormat: Equatable, Sendable, Codable {
 
     public var hasVideo: Bool {
         let value = (vcodec ?? "").lowercased()
-        return !value.isEmpty && value != "none"
+        if value == "none" { return false }
+        if !value.isEmpty { return true }
+        return ["mp4", "mov", "mkv", "webm", "m4v", "flv"].contains(ext.lowercased())
     }
 
     public var hasAudio: Bool {
         let value = (acodec ?? "").lowercased()
-        return !value.isEmpty && value != "none"
+        if value == "none" { return false }
+        if !value.isEmpty { return true }
+        return ["mp4", "mov", "m4a", "m4v", "mkv", "webm", "mp3"].contains(ext.lowercased())
     }
 
     public var knownBytes: Int? {

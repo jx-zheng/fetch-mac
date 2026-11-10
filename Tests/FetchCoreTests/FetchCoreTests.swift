@@ -274,6 +274,19 @@ final class FormatSelectorTests: XCTestCase {
         XCTAssertEqual(plan?.needsTranscode, false)
     }
 
+    func testDirectMP4WithUnknownCodecsStreamsCopy() {
+        let plan = FormatSelector.plan(SelectionInput(
+            extractorKey: "generic",
+            duration: 10,
+            formats: [MediaFormat(formatID: "mp4", ext: "mp4", filesize: 1_000_000)],
+            container: .mp4H264,
+            quality: .best,
+            maxBytes: nil
+        ))
+        XCTAssertEqual(plan?.selector, "mp4")
+        XCTAssertEqual(plan?.needsTranscode, false)
+    }
+
     func testMP3TranscodesFromAAC() {
         let plan = FormatSelector.plan(SelectionInput(
             extractorKey: "youtube",
