@@ -152,12 +152,25 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 14)
             HStack {
-                Text("Quality")
+                Text("Video quality")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Picker("Quality", selection: $model.defaultQuality) {
+                Picker("Video quality", selection: $model.defaultQuality) {
                     ForEach(Quality.choices(for: .mp4H264, sourceHeights: [])) { quality in
+                        Text(quality.title).tag(quality)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 140)
+            }
+            HStack {
+                Text("Audio quality")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Picker("Audio quality", selection: $model.defaultAudioQuality) {
+                    ForEach(Quality.choices(for: .mp3, sourceHeights: [])) { quality in
                         Text(quality.title).tag(quality)
                     }
                 }

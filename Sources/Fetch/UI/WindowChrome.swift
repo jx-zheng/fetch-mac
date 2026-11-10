@@ -11,7 +11,7 @@ struct WindowDragRegion: NSViewRepresentable {
 
     final class DragView: NSView {
         private var dragOrigin: NSPoint?
-        private var dragStart: NSPoint?
+        private var dragStartScreen: NSPoint?
 
         override var mouseDownCanMoveWindow: Bool { false }
 
@@ -20,23 +20,27 @@ struct WindowDragRegion: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             if event.clickCount >= 2 {
                 dragOrigin = nil
+                dragStartScreen = nil
                 TitlebarActions.doubleClick(window)
                 return
             }
-            dragOrigin = window?.frame.origin
-            dragStart = event.locationInWindow
+            guard let window else { return }
+            dragOrigin = window.frame.origin
+            dragStartScreen = window.convertPoint(toScreen: event.locationInWindow)
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard let window, let dragOrigin, let dragStart else { return }
-            let dx = event.locationInWindow.x - dragStart.x
-            let dy = event.locationInWindow.y - dragStart.y
-            window.setFrameOrigin(NSPoint(x: dragOrigin.x + dx, y: dragOrigin.y + dy))
+            guard let window, let dragOrigin, let dragStartScreen else { return }
+            let current = window.convertPoint(toScreen: event.locationInWindow)
+            window.setFrameOrigin(NSPoint(
+                x: dragOrigin.x + (current.x - dragStartScreen.x),
+                y: dragOrigin.y + (current.y - dragStartScreen.y)
+            ))
         }
 
         override func mouseUp(with event: NSEvent) {
             dragOrigin = nil
-            dragStart = nil
+            dragStartScreen = nil
         }
 
         override func viewDidMoveToWindow() {
@@ -92,10 +96,18 @@ enum TitlebarCheck {
             guard !bodyContainsDragView(content) else { fail("empty window body is draggable", screenshot) }
 
             let before = window.frame.origin
-            let start = NSPoint(x: 80, y: 40)
-            drag.mouseDown(with: mouseEvent(.leftMouseDown, start, window: window, clicks: 1))
-            drag.mouseDragged(with: mouseEvent(.leftMouseDragged, NSPoint(x: start.x + 48, y: start.y + 26), window: window, clicks: 1))
-            drag.mouseUp(with: mouseEvent(.leftMouseUp, NSPoint(x: start.x + 48, y: start.y + 26), window: window, clicks: 1))
+            let anchor = drag.convert(NSPoint(x: drag.bounds.midX, y: drag.bounds.midY), to: nil)
+            window.sendEvent(mouseEvent(.leftMouseDown, anchor, window: window, clicks: 1))
+            let steps: [(CGFloat, CGFloat)] = [(10, 6), (10, 5), (10, 5), (10, 5), (8, 5)]
+            var screen = window.convertToScreen(NSRect(origin: anchor, size: .zero)).origin
+            for (stepX, stepY) in steps {
+                screen.x += stepX
+                screen.y += stepY
+                let local = window.convertFromScreen(NSRect(origin: screen, size: .zero)).origin
+                window.sendEvent(mouseEvent(.leftMouseDragged, local, window: window, clicks: 1))
+            }
+            let end = window.convertFromScreen(NSRect(origin: screen, size: .zero)).origin
+            window.sendEvent(mouseEvent(.leftMouseUp, end, window: window, clicks: 1))
             let moved = window.frame.origin
             let dx = moved.x - before.x
             let dy = moved.y - before.y
@@ -107,27 +119,32 @@ enum TitlebarCheck {
             let setting = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
             let zoomBefore = window.frame
             let miniBefore = window.isMiniaturized
-            let wasResizable = window.styleMask.contains(.resizable)
-            if setting != "None" && setting != "Minimize" {
-                window.styleMask.insert(.resizable)
-            }
-            drag.mouseDown(with: mouseEvent(.leftMouseDown, start, window: window, clicks: 2))
+            drag.mouseDown(with: mouseEvent(.leftMouseDown, anchor, window: window, clicks: 2))
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            var zoomNote = setting
             switch setting {
             case "None":
                 guard window.frame == zoomBefore, window.isMiniaturized == miniBefore else {
                     fail("double-click ignored the None setting", screenshot)
                 }
+                zoomNote = "None"
             case "Minimize":
                 guard window.isMiniaturized else { fail("double-click did not minimize", screenshot) }
                 window.deminiaturize(nil)
+                zoomNote = "Minimize"
             default:
-                guard window.isZoomed || window.frame != zoomBefore else {
+                if !window.styleMask.contains(.resizable) {
+                    guard !window.isMiniaturized else { fail("double-click minimized a fixed-size window", screenshot) }
+                    if window.isZoomed { window.zoom(nil) }
+                    window.setFrame(zoomBefore, display: true)
+                    zoomNote = window.frame == zoomBefore ? "fixed_size_no_zoom" : "Maximize"
+                } else if window.isZoomed || window.frame != zoomBefore {
+                    if window.isZoomed { window.zoom(nil) }
+                    window.setFrame(zoomBefore, display: true)
+                    zoomNote = "Maximize"
+                } else {
                     fail("double-click did not zoom", screenshot)
                 }
-                if window.isZoomed { window.zoom(nil) }
-                window.setFrame(zoomBefore, display: true)
-                if !wasResizable { window.styleMask.remove(.resizable) }
             }
 
             window.hasShadow = false
@@ -155,7 +172,7 @@ enum TitlebarCheck {
             }
             let light = alphas["light"] ?? 0
             let dark = alphas["dark"] ?? 0
-            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@", light, dark, dx, dy, setting))
+            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@", light, dark, dx, dy, zoomNote))
             NSApp.terminate(nil)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: finish)
@@ -179,11 +196,9 @@ enum TitlebarCheck {
         ) else { return [0] }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         let xs = [width / 2, min(width - 8, 90), max(8, width - 40)]
-        // Context origin is the bottom, so the top rows are the last ones in the buffer.
         return [4, 12, 20].flatMap { fromTop in
-            let y = height - 1 - fromTop
-            return xs.map { x in
-                CGFloat(pixels[(y * width + x) * 4 + 3]) / 255
+            xs.map { x in
+                CGFloat(pixels[(fromTop * width + x) * 4 + 3]) / 255
             }
         }
     }

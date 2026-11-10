@@ -396,6 +396,7 @@ final class FormatSelectorTests: XCTestCase {
         XCTAssertEqual(CardTransition.afterControlEdit(.ready), .ready)
         XCTAssertEqual(CardTransition.afterControlEdit(.downloading), .downloading)
         XCTAssertEqual(CardTransition.afterControlEdit(.failed), .failed)
+        XCTAssertEqual(CardTransition.afterControlEdit(.resolving), .resolving)
     }
 
     func testMP3TranscodesFromAAC() {

@@ -8,9 +8,11 @@ final class AppModel: ObservableObject {
 
     @Published var urlText = ""
     @Published var phase: ScreenPhase = .empty
-    @Published var container: ContainerFormat { didSet { persist(.container); refreshPlan() } }
-    /// Saved in Settings. Clamping a single video never writes this.
+    @Published var container: ContainerFormat { didSet { containerChanged() } }
+    /// Saved video default. Clamping one link never writes this.
     @Published var defaultQuality: Quality { didSet { persist(.quality) } }
+    /// Saved audio default, separate from the video default.
+    @Published var defaultAudioQuality: Quality { didSet { persist(.audioQuality) } }
     /// The choice for the link on screen. Not the Settings default.
     @Published var quality: Quality { didSet { refreshPlan() } }
     @Published var maxSizeEnabled: Bool { didSet { persist(.maxSize); refreshPlan() } }
@@ -27,7 +29,7 @@ final class AppModel: ObservableObject {
     @Published var ffmpegVersion = "—"
 
     private enum Key: String {
-        case container, quality, maxSize, maxSizeMB, clipboard, menuBar, folder
+        case container, quality, audioQuality, maxSize, maxSizeMB, clipboard, menuBar, folder
     }
 
     private let defaults = UserDefaults.standard
@@ -51,6 +53,8 @@ final class AppModel: ObservableObject {
         let storedQuality = defaults.string(forKey: Key.quality.rawValue).flatMap(Quality.init(rawValue:)) ?? .best
         container = storedContainer
         defaultQuality = storedQuality
+        let storedAudio = defaults.string(forKey: Key.audioQuality.rawValue).flatMap(Quality.init(rawValue:)) ?? .best
+        defaultAudioQuality = storedAudio.isAudio || storedAudio == .best ? storedAudio : .best
         quality = storedQuality
         let storedMaxSize = defaults.object(forKey: Key.maxSize.rawValue) as? Bool ?? false
         let storedMaxMB = defaults.object(forKey: Key.maxSizeMB.rawValue) as? Int ?? 25
@@ -161,9 +165,20 @@ final class AppModel: ObservableObject {
         input.maxBytes = currentCap
         guard let plan = FormatSelector.plan(input) else { return }
         self.plan = plan
-        let next = CardTransition.afterControlEdit(cardPhase)
-        if next == .ready || cardPhase == .resolving {
+        if CardTransition.afterControlEdit(cardPhase) == .ready {
             phase = .preview(previewContent(info, plan: plan))
+        }
+    }
+
+    private func containerChanged() {
+        persist(.container)
+        guard !isResolving else { return }
+        let base = container.isAudioOnly ? defaultAudioQuality : defaultQuality
+        let next = base.sanitized(for: container, sourceHeights: sourceHeights)
+        if quality != next {
+            quality = next
+        } else {
+            refreshPlan()
         }
     }
 
@@ -183,7 +198,7 @@ final class AppModel: ObservableObject {
     }
 
     func download() {
-        guard let info, !isDownloading else { return }
+        guard case .preview = phase, let info, !isDownloading else { return }
         let urlString = urlText
         guard case .success(let url) = URLValidator.validate(urlString) else { return }
         work?.cancel()
@@ -349,6 +364,9 @@ final class AppModel: ObservableObject {
             return
         }
         guard !isDownloading else { return }
+        info = nil
+        plan = nil
+        thumbnail = nil
         phase = .resolving("Fetching the video…")
         do {
             _ = try await engine.binaries()
@@ -369,19 +387,23 @@ final class AppModel: ObservableObject {
         do {
             let info = try await service.fetchInfo(url: url, cookiesFromBrowser: useCookies ? "safari" : nil)
             if token != generation || Task.isCancelled { return }
+            guard token == generation, !Task.isCancelled else { return }
             self.info = info
             self.thumbnail = nil
             self.retriedEngine = false
-            let fitted = defaultQuality.sanitized(for: container, sourceHeights: sourceHeights)
+            let base = container.isAudioOnly ? defaultAudioQuality : defaultQuality
+            let fitted = base.sanitized(for: container, sourceHeights: sourceHeights)
             if quality != fitted {
                 quality = fitted
             } else {
                 refreshPlan()
             }
-            guard case .preview = phase else {
+            guard token == generation else { return }
+            guard let plan = self.plan else {
                 phase = .failed(ProblemCopy.present(MappedError(kind: .noFormats, detail: ""), site: info.siteName, link: raw))
                 return
             }
+            phase = .preview(previewContent(info, plan: plan))
             loadThumbnail(info)
         } catch let failure as EngineFailure {
             if token != generation { return }
@@ -555,6 +577,11 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    private var isResolving: Bool {
+        if case .resolving = phase { return true }
+        return false
+    }
+
     private func loadThumbnail(_ info: VideoInfo) {
         thumbTask?.cancel()
         guard let url = info.thumbnailURL, url.scheme == "https" else { return }
@@ -622,6 +649,7 @@ final class AppModel: ObservableObject {
         switch key {
         case .container: defaults.set(container.rawValue, forKey: key.rawValue)
         case .quality: defaults.set(defaultQuality.rawValue, forKey: key.rawValue)
+        case .audioQuality: defaults.set(defaultAudioQuality.rawValue, forKey: key.rawValue)
         case .maxSize: defaults.set(maxSizeEnabled, forKey: key.rawValue)
         case .maxSizeMB: defaults.set(maxSizeMB, forKey: key.rawValue)
         case .clipboard: defaults.set(watchClipboard, forKey: key.rawValue)
