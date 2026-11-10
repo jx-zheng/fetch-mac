@@ -1,0 +1,138 @@
+import FetchCore
+import Foundation
+
+enum CLI {
+    static func run() async {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        guard let commandIndex = arguments.firstIndex(of: "--cli"), arguments.indices.contains(commandIndex + 1) else {
+            complain("usage: Fetch --cli version|metadata|download …", 2)
+        }
+        let command = arguments[commandIndex + 1]
+        let rest = Array(arguments.dropFirst(commandIndex + 2))
+        do {
+            switch command {
+            case "version":
+                let binaries = try await EngineStore.shared.prepare()
+                let yt = try await version(of: binaries.ytDlp, arguments: ["--ignore-config", "--version"], directory: binaries.directory)
+                let deno = try await version(of: binaries.deno, arguments: ["--version"], directory: binaries.directory)
+                let ffmpeg = try await version(of: binaries.ffmpeg, arguments: ["-version"], directory: binaries.directory)
+                print("yt-dlp \(yt)")
+                print("deno \(deno)")
+                print("ffmpeg \(ffmpeg.split(separator: "\n").first ?? "")")
+            case "metadata":
+                guard let raw = rest.first, case .success(let url) = URLValidator.validate(raw) else {
+                    complain("metadata needs one http(s) URL", 2)
+                }
+                let info = try await DownloadService().fetchInfo(url: url, cookiesFromBrowser: nil)
+                let plan = FormatSelector.plan(SelectionInput(
+                    extractorKey: info.extractorKey ?? info.extractor,
+                    duration: info.duration,
+                    formats: info.formats,
+                    container: .mp4H264,
+                    quality: .best,
+                    maxBytes: nil
+                ))
+                let summary: [String: Any] = [
+                    "title": info.title,
+                    "site": info.siteName,
+                    "duration": info.duration ?? 0,
+                    "formats": info.formats.count,
+                    "selector": plan?.selector ?? "",
+                    "noWatermark": plan?.noWatermark ?? false,
+                ]
+                print(try json(summary))
+            case "download":
+                try await download(rest)
+            default:
+                complain("unknown command \(command)", 2)
+            }
+        } catch let failure as EngineFailure {
+            let code: Int32 = (failure.mapped.kind == .network || failure.mapped.kind == .region) ? 4 : 3
+            complain("\(failure.mapped.kind) \(failure.mapped.detail)", code)
+        } catch {
+            complain("\(error)", 3)
+        }
+    }
+
+    private static func complain(_ message: String, _ code: Int32) -> Never {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        exit(code)
+    }
+
+    private static func download(_ arguments: [String]) async throws {
+        var rawURL: String?
+        var output = FileManager.default.temporaryDirectory
+        var maxMB: Double?
+        var format = ContainerFormat.mp4H264
+        var quality = Quality.best
+        var index = 0
+        while index < arguments.count {
+            let argument = arguments[index]
+            switch argument {
+            case "--output":
+                index += 1
+                output = URL(fileURLWithPath: arguments[index], isDirectory: true)
+            case "--max-mb":
+                index += 1
+                maxMB = Double(arguments[index])
+            case "--format":
+                index += 1
+                format = ContainerFormat(rawValue: arguments[index]) ?? .mp4H264
+            case "--quality":
+                index += 1
+                quality = Quality(rawValue: arguments[index]) ?? .best
+            default:
+                if rawURL == nil { rawURL = argument }
+            }
+            index += 1
+        }
+        guard let rawURL, case .success(let url) = URLValidator.validate(rawURL) else {
+            complain("download needs one http(s) URL", 2)
+        }
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let service = DownloadService()
+        let info = try await service.fetchInfo(url: url, cookiesFromBrowser: nil)
+        let cap = maxMB.map { Int($0 * 1_000_000) }
+        let outcome = try await service.download(
+            url: url,
+            info: info,
+            container: format,
+            quality: quality,
+            maxBytes: cap,
+            outputDirectory: output,
+            cookiesFromBrowser: nil,
+            onProgress: { _ in }
+        )
+        let summary: [String: Any] = [
+            "path": outcome.fileURL.path,
+            "bytes": outcome.byteCount,
+            "transcoded": outcome.transcoded,
+            "hardware": outcome.hardware,
+            "noWatermark": outcome.noWatermark,
+            "audio": outcome.hasAudio,
+            "video": outcome.hasVideo,
+            "width": outcome.width ?? 0,
+            "height": outcome.height ?? 0,
+            "underCap": outcome.underCap,
+        ]
+        print("FETCH_RESULT \(try json(summary))")
+    }
+
+    private static func version(of executable: URL, arguments: [String], directory: URL) async throws -> String {
+        let runner = ManagedProcess()
+        var lines: [String] = []
+        _ = try await runner.run(
+            executable: executable,
+            arguments: arguments,
+            environment: ChildEnvironment.make(binDirectory: directory),
+            currentDirectory: directory,
+            onLine: { _, line in lines.append(line) }
+        )
+        return lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+    }
+
+    private static func json(_ object: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+}

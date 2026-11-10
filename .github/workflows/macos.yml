@@ -1,0 +1,75 @@
+name: macOS
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: fetch-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      FETCH_SKIP_UPDATE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          swift --version
+          sw_vers
+          uname -m
+
+      - name: Unit tests
+        run: swift test --parallel
+
+      - name: Download engines
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 Scripts/fetch_engines.py
+
+      - name: Build app
+        run: bash Scripts/build-app.sh
+
+      - name: Screenshots
+        run: |
+          mkdir -p artifacts/screenshots
+          artifacts/Fetch.app/Contents/MacOS/Fetch --screenshots "$PWD/artifacts/screenshots"
+          find artifacts/screenshots -type f -print
+
+      - name: Downloads and resource use
+        run: bash Scripts/e2e.sh
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: artifacts/screenshots
+          if-no-files-found: warn
+
+      - name: Upload Fetch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fetch-macOS
+          path: |
+            artifacts/Fetch.zip
+            artifacts/Fetch.dmg
+          if-no-files-found: warn
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: |
+            artifacts/report.txt
+            artifacts/e2e
+          if-no-files-found: warn
