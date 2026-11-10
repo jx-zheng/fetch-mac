@@ -1,4 +1,5 @@
 import AppKit
+import FetchCore
 import SwiftUI
 
 /// Opens the real Quality menu after resolving a real link, in light and dark.
@@ -92,9 +93,11 @@ enum MenuShots {
             rect = rect.intersection(screen.frame.insetBy(dx: -20, dy: -20))
         }
         let cgRect = CGRect(x: rect.minX, y: screenHeight - rect.maxY, width: rect.width, height: rect.height)
-        guard let image = CGWindowListCreateImage(cgRect, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution, .boundsIgnoreFraming]),
-              let rep = NSBitmapImageRep(cgImage: image),
-              let png = rep.representation(using: .png, properties: [:]) else {
+        guard let image = CGWindowListCreateImage(cgRect, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution, .boundsIgnoreFraming]) else {
+            fail("couldn't capture \(url.lastPathComponent)")
+        }
+        let rep = NSBitmapImageRep(cgImage: image)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
             fail("couldn't capture \(url.lastPathComponent)")
         }
         do {

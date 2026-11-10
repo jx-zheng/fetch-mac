@@ -146,7 +146,8 @@ enum TitlebarCheck {
                     fail("\(name) title bar is transparent (alphas \(samples))", screenshot)
                 }
                 alphas[name] = minAlpha
-                if let rep = NSBitmapImageRep(cgImage: image), let png = rep.representation(using: .png, properties: [:]) {
+                let rep = NSBitmapImageRep(cgImage: image)
+                if let png = rep.representation(using: .png, properties: [:]) {
                     let url = screenshot.deletingLastPathComponent().appendingPathComponent("titlebar-\(name).png")
                     try? png.write(to: url)
                     if name == "light" { try? png.write(to: screenshot) }
