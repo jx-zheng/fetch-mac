@@ -13,6 +13,20 @@ enum FetchEntry {
             AppFlags.launchSample = true
             AppFlags.skipEngineUpdate = true
         }
+        if let index = arguments.firstIndex(of: "--menu-shots"),
+           arguments.indices.contains(index + 2) {
+            AppFlags.skipEngineUpdate = true
+            let directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+            let media = arguments[index + 2]
+            DispatchQueue.main.async {
+                Task { @MainActor in
+                    await MenuShots.run(directory: directory, media: media)
+                }
+            }
+            NSApplication.shared.setActivationPolicy(.regular)
+            NSApplication.shared.run()
+            return
+        }
         if let index = arguments.firstIndex(of: "--titlebar-check"), arguments.indices.contains(index + 1) {
             AppFlags.titlebarCheckURL = arguments[index + 1]
             AppFlags.skipEngineUpdate = true

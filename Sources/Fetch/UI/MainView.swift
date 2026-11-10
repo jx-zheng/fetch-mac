@@ -27,7 +27,6 @@ struct MainView: View {
     var phase: ScreenPhase
     var clipboardOffer: String? = nil
     var sourceHeights: [Int] = []
-    var showsQualityMenu: Bool = false
     var saveName: String
     var dropActive: Bool
     var actions: MainActions
@@ -521,12 +520,6 @@ struct MainView: View {
                 .pickerStyle(.menu)
                 .disabled(!controlsEnabled)
                 .accessibilityIdentifier("qualityPicker")
-                .overlay(alignment: .bottomLeading) {
-                    if showsQualityMenu {
-                        qualityMenu
-                            .offset(y: -30)
-                    }
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             labeled("Max size") {
@@ -662,33 +655,6 @@ struct MainView: View {
     }
 
     private var allowsMaxSize: Bool { !container.isAudioOnly }
-
-    private var qualityMenu: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(qualityChoices) { item in
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .opacity(item == quality ? 1 : 0)
-                        .frame(width: 14)
-                    Text(item.title)
-                        .font(.system(size: 13))
-                        .foregroundStyle(item == quality ? Color.white : Theme.text)
-                    Spacer(minLength: 12)
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .background(item == quality ? Theme.accent : Color.clear)
-            }
-        }
-        .padding(.vertical, 4)
-        .frame(width: 148)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
-        .accessibilityIdentifier("qualityMenu")
-    }
 
     private var canDownload: Bool {
         if case .preview = phase { return true }

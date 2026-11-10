@@ -23,16 +23,6 @@ log "Host: $(sw_vers -productVersion) $(uname -m)"
 "$BIN" --cli version | tee -a "$REPORT"
 
 log ""
-log "Title bar is opaque and draggable"
-if "$BIN" --titlebar-check "$OUT/titlebar.png" > "$OUT/titlebar.txt" 2>"$OUT/titlebar.err"; then
-  cat "$OUT/titlebar.txt" | tee -a "$REPORT"
-else
-  log "Title bar check failed"
-  cat "$OUT/titlebar.err" | tee -a "$REPORT" || true
-  exit 1
-fi
-
-log ""
 log "Engine update (already current is success)"
 if "$BIN" --cli update stable > "$OUT/update.txt" 2>"$OUT/update.err"; then
   log "Update path: success"
@@ -131,6 +121,35 @@ PY
 
 measure_launch cold 1
 measure_launch warm 0
+
+log ""
+log "Title bar is opaque in light and dark, and a drag moves it"
+mkdir -p "$ROOT/artifacts/screenshots"
+if "$BIN" --titlebar-check "$OUT/titlebar.png" > "$OUT/titlebar.txt" 2>"$OUT/titlebar.err"; then
+  cat "$OUT/titlebar.txt" | tee -a "$REPORT"
+  cp "$OUT"/titlebar-light.png "$OUT"/titlebar-dark.png "$ROOT/artifacts/screenshots/" 2>/dev/null || true
+else
+  log "Title bar check failed"
+  cat "$OUT/titlebar.err" | tee -a "$REPORT" || true
+  exit 1
+fi
+
+log ""
+log "Quality menus from a resolved video, video format and audio format"
+MENU_URL="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
+if "$BIN" --menu-shots "$ROOT/artifacts/screenshots" "$MENU_URL" > "$OUT/menus.txt" 2>"$OUT/menus.err"; then
+  cat "$OUT/menus.txt" | tee -a "$REPORT"
+else
+  log "Quality menu screenshots failed"
+  cat "$OUT/menus.err" | tee -a "$REPORT" || true
+  exit 1
+fi
+for shot in quality-video-light quality-video-dark quality-audio-light quality-audio-dark; do
+  if [[ ! -s "$ROOT/artifacts/screenshots/${shot}.png" ]]; then
+    log "missing $shot.png"
+    exit 1
+  fi
+done
 
 log ""
 log "YouTube metadata"

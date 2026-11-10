@@ -128,10 +128,13 @@ public enum Quality: String, Codable, CaseIterable, Sendable, Identifiable {
         return result
     }
 
-    /// A choice that is valid for this format and source. Anything else becomes Best.
+    /// A choice that is on the menu. A saved step the source doesn't reach snaps to the nearest lower one.
     public func sanitized(for container: ContainerFormat, sourceHeights: [Int]) -> Quality {
         let menu = Self.choices(for: container, sourceHeights: sourceHeights)
-        return menu.contains(self) ? self : .best
+        if menu.contains(self) { return self }
+        guard !container.isAudioOnly, maxHeight != nil else { return .best }
+        let lower = menu.filter { $0.maxHeight != nil && ($0.maxHeight ?? 0) <= (maxHeight ?? 0) }
+        return lower.max { ($0.maxHeight ?? 0) < ($1.maxHeight ?? 0) } ?? .best
     }
 }
 
@@ -189,11 +192,34 @@ public struct MediaFormat: Equatable, Sendable, Codable {
         self.formatNote = formatNote
     }
 
+    public var isStoryboard: Bool {
+        let note = (formatNote ?? "").lowercased()
+        let id = formatID.lowercased()
+        return note.contains("storyboard") || id.hasPrefix("sb")
+    }
+
     public var hasVideo: Bool {
+        if isStoryboard { return false }
         let value = (vcodec ?? "").lowercased()
         if value == "none" { return false }
         if !value.isEmpty { return true }
         return ["mp4", "mov", "mkv", "webm", "m4v", "flv"].contains(ext.lowercased())
+    }
+
+    /// The side people mean by “1080p”: the short side of a video frame.
+    /// Storyboards and audio-only formats have none.
+    public var resolutionSide: Int? {
+        guard hasVideo else { return nil }
+        switch (width, height) {
+        case let (w?, h?) where w > 0 && h > 0:
+            return min(w, h)
+        case let (_, h?) where h > 0:
+            return h
+        case let (w?, _) where w > 0:
+            return w
+        default:
+            return nil
+        }
     }
 
     public var hasAudio: Bool {

@@ -34,10 +34,6 @@ enum ScreenshotHarness {
             ("fulldisk", .dark, AnyView(main(.failed(fullDisk), url: instagramURL, max: "", enabled: false))),
             ("ready", .light, AnyView(main(.preview(youtubeReady), url: youtubeURL, max: "50", enabled: true, container: .mp4H264, quality: .p1080, heights: [1080, 720, 480]))),
             ("ready", .dark, AnyView(main(.preview(youtubeReady), url: youtubeURL, max: "50", enabled: true, container: .mp4H264, quality: .p1080, heights: [1080, 720, 480]))),
-            ("quality-video", .light, AnyView(main(.preview(youtubeReady), url: youtubeURL, max: "50", enabled: true, container: .mp4H264, quality: .p1080, heights: [1080, 720, 480], menu: true))),
-            ("quality-video", .dark, AnyView(main(.preview(youtubeReady), url: youtubeURL, max: "50", enabled: true, container: .mp4H264, quality: .p1080, heights: [1080, 720, 480], menu: true))),
-            ("quality-audio", .light, AnyView(main(.preview(audioReady), url: youtubeURL, max: "", enabled: false, container: .mp3, quality: .best, heights: [1080, 720], menu: true))),
-            ("quality-audio", .dark, AnyView(main(.preview(audioReady), url: youtubeURL, max: "", enabled: false, container: .mp3, quality: .best, heights: [1080, 720], menu: true))),
             ("settings", .light, AnyView(settings)),
             ("settings", .dark, AnyView(settings)),
         ]
@@ -160,10 +156,9 @@ enum ScreenshotHarness {
         offer: String? = nil,
         container: ContainerFormat = .mp4H264,
         quality: Quality = .best,
-        heights: [Int] = [],
-        menu: Bool = false
+        heights: [Int] = []
     ) -> some View {
-        Shot(phase: phase, url: url, max: max, enabled: enabled, offer: offer, container: container, quality: quality, heights: heights, menu: menu)
+        Shot(phase: phase, url: url, max: max, enabled: enabled, offer: offer, container: container, quality: quality, heights: heights)
     }
 
     private static var settings: some View {
@@ -224,22 +219,6 @@ enum ScreenshotHarness {
         )
     }
 
-    private static var audioReady: PreviewContent {
-        PreviewContent(
-            title: "How a Mechanical Watch Actually Works",
-            site: "YouTube",
-            author: "Veritasium",
-            resolution: nil,
-            duration: "12:08",
-            thumbnail: nil,
-            portrait: false,
-            badges: [
-                PreviewBadge(id: "size", text: "≈ 3.3 MB", good: false),
-                PreviewBadge(id: "codec", text: "MP3", good: false),
-            ]
-        )
-    }
-
     private static var completed: CompletedContent {
         CompletedContent(filename: "How a Mechanical Watch Actually Works.mp4", detail: "48.7 MB · 1080p · H.264 · fits under 50 MB", fileURL: nil)
     }
@@ -278,13 +257,11 @@ private struct Shot: View {
     var phase: ScreenPhase
     var offer: String?
     var heights: [Int]
-    var menu: Bool
 
-    init(phase: ScreenPhase, url: String, max: String, enabled: Bool, offer: String? = nil, container: ContainerFormat = .mp4H264, quality: Quality = .best, heights: [Int] = [], menu: Bool = false) {
+    init(phase: ScreenPhase, url: String, max: String, enabled: Bool, offer: String? = nil, container: ContainerFormat = .mp4H264, quality: Quality = .best, heights: [Int] = []) {
         self.phase = phase
         self.offer = offer
         self.heights = heights
-        self.menu = menu
         _urlText = State(initialValue: url)
         _container = State(initialValue: container)
         _quality = State(initialValue: quality)
@@ -302,7 +279,6 @@ private struct Shot: View {
             phase: phase,
             clipboardOffer: offer,
             sourceHeights: heights,
-            showsQualityMenu: menu,
             saveName: "Downloads",
             dropActive: false,
             actions: MainActions()

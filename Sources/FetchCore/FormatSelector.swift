@@ -334,8 +334,8 @@ public enum FormatSelector {
 
     private static func passesHeight(_ format: MediaFormat, quality: Quality) -> Bool {
         guard let maxHeight = quality.maxHeight else { return true }
-        guard let height = format.height else { return true }
-        return height <= maxHeight + 16
+        guard let side = format.resolutionSide else { return true }
+        return side <= maxHeight + 16
     }
 
     private static func score(format: MediaFormat, watermark: WatermarkKind, container: ContainerFormat, hasSeparateAudio: Bool) -> Int {

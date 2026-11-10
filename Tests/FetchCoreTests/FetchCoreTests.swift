@@ -329,7 +329,8 @@ final class FormatSelectorTests: XCTestCase {
         )
         XCTAssertEqual(Quality.p1080.sanitized(for: .mp3, sourceHeights: [1080]), .best)
         XCTAssertEqual(Quality.kbps256.sanitized(for: .mp4H264, sourceHeights: [1080, 720]), .best)
-        XCTAssertEqual(Quality.p2160.sanitized(for: .mp4H264, sourceHeights: [1080]), .best)
+        XCTAssertEqual(Quality.p2160.sanitized(for: .mp4H264, sourceHeights: [1080]), .p1080)
+        XCTAssertEqual(Quality.p1080.sanitized(for: .mp4H264, sourceHeights: [720]), .p720)
         XCTAssertEqual(Quality.p720.sanitized(for: .mov, sourceHeights: [1080, 720, 480]), .p720)
     }
 
@@ -368,6 +369,26 @@ final class FormatSelectorTests: XCTestCase {
         guard case .transcode(let recipe) = plan?.delivery else { return XCTFail("expected transcode") }
         XCTAssertEqual(recipe.audioBitrateKbps, 128)
         XCTAssertNil(recipe.videoEncoder)
+    }
+
+    func testStoryboardsAreNotResolutionsAndPortraitUsesTheShortSide() {
+        let storyboard = MediaFormat(formatID: "sb0", ext: "mhtml", vcodec: "none", width: 1920, height: 1080, formatNote: "storyboard")
+        XCTAssertFalse(storyboard.hasVideo)
+        XCTAssertNil(storyboard.resolutionSide)
+        let portrait = MediaFormat(formatID: "18", ext: "mp4", vcodec: "avc1.4d401f", acodec: "mp4a.40.2", width: 1080, height: 1920)
+        XCTAssertEqual(portrait.resolutionSide, 1080)
+        XCTAssertEqual(
+            Quality.choices(for: .mp4H264, sourceHeights: [portrait.resolutionSide!]).map(\.title),
+            ["Best", "1080p"]
+        )
+        let landscape = MediaFormat(formatID: "137", ext: "mp4", vcodec: "avc1", width: 1920, height: 1080)
+        XCTAssertEqual(landscape.resolutionSide, 1080)
+    }
+
+    func testAudioHasNoSizeCap() {
+        XCTAssertNil(SizeCap.bytes(audioOnly: true, enabled: true, megabytes: 25))
+        XCTAssertEqual(SizeCap.bytes(audioOnly: false, enabled: true, megabytes: 25), 25_000_000)
+        XCTAssertNil(SizeCap.bytes(audioOnly: false, enabled: false, megabytes: 25))
     }
 
     func testCompletedEditReturnsToReadyWithoutANewFetch() {

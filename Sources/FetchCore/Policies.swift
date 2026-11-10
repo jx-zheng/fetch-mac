@@ -53,6 +53,14 @@ public enum CardPhase: Equatable, Sendable {
     case failed
 }
 
+public enum SizeCap {
+    /// Audio formats have no size cap. The bitrate menu is the control.
+    public static func bytes(audioOnly: Bool, enabled: Bool, megabytes: Int) -> Int? {
+        guard !audioOnly, enabled, megabytes > 0 else { return nil }
+        return megabytes * 1_000_000
+    }
+}
+
 public enum CardTransition {
     /// Editing format, quality, or the size cap on a finished download returns to the
     /// ready card for the same link. The info fetch is kept.

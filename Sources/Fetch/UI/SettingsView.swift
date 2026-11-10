@@ -156,8 +156,8 @@ struct SettingsView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Picker("Quality", selection: $model.quality) {
-                    ForEach(Quality.choices(for: model.container, sourceHeights: model.sourceHeights)) { quality in
+                Picker("Quality", selection: $model.defaultQuality) {
+                    ForEach(Quality.choices(for: .mp4H264, sourceHeights: [])) { quality in
                         Text(quality.title).tag(quality)
                     }
                 }

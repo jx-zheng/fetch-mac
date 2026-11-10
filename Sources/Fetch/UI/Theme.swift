@@ -40,7 +40,7 @@ struct WindowBackground: NSViewRepresentable {
             window.backgroundColor = .clear
             window.titlebarAppearsTransparent = true
             window.titleVisibility = .hidden
-            window.isMovableByWindowBackground = true
+            window.isMovableByWindowBackground = false
             window.styleMask.insert(.fullSizeContentView)
             window.toolbar = nil
         }
