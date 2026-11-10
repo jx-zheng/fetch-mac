@@ -127,6 +127,7 @@ enum TitlebarCheck {
                 }
                 if window.isZoomed { window.zoom(nil) }
                 window.setFrame(zoomBefore, display: true)
+                if !wasResizable { window.styleMask.remove(.resizable) }
             }
 
             window.hasShadow = false
