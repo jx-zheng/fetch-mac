@@ -334,6 +334,48 @@ final class FormatSelectorTests: XCTestCase {
         XCTAssertEqual(Quality.p720.sanitized(for: .mov, sourceHeights: [1080, 720, 480]), .p720)
     }
 
+    func testEveryFormatShowsAQualityOnLaunchAndAfterSwitching() {
+        let stored: [(String?, String?)] = [
+            (nil, nil),
+            ("p1080", nil),
+            ("kbps320", nil),
+            ("kbps256", "best"),
+            ("p720", "kbps192"),
+            ("best", "kbps128"),
+            ("not-a-quality", "p1080"),
+            ("kbps128", "p2160"),
+        ]
+        for (videoRaw, audioRaw) in stored {
+            let video = Quality.videoDefault(stored: videoRaw)
+            let audio = Quality.audioDefault(stored: audioRaw, legacyVideoKey: videoRaw)
+            XCTAssertFalse(video.isAudio, "video default \(videoRaw ?? "nil")")
+            XCTAssertTrue(audio == .best || audio.isAudio, "audio default \(audioRaw ?? "nil")")
+            if videoRaw == "kbps320" {
+                XCTAssertEqual(video, .best)
+                XCTAssertEqual(audio, .kbps320)
+            }
+            for heights in [[Int](), [1080, 720, 480], [720]] {
+                for format in ContainerFormat.allCases {
+                    let menu = Quality.choices(for: format, sourceHeights: heights)
+                    XCTAssertFalse(menu.isEmpty)
+                    let current = Quality.selection(for: format, videoDefault: video, audioDefault: audio, sourceHeights: heights)
+                    XCTAssertTrue(menu.contains(current), "\(format) \(heights) video=\(videoRaw ?? "nil") audio=\(audioRaw ?? "nil") -> \(current)")
+                    XCTAssertFalse(current.title.isEmpty)
+                }
+            }
+        }
+        let freshMP3 = Quality.selection(for: .mp3, videoDefault: .p1080, audioDefault: .best, sourceHeights: [])
+        XCTAssertEqual(freshMP3, .best)
+        XCTAssertEqual(
+            Quality.choices(for: .mp3, sourceHeights: []).map(\.title).contains(freshMP3.title),
+            true
+        )
+    }
+
+    func testMaxSizePlaceholderReadsAny() {
+        XCTAssertEqual(FieldCopy.maxSizePlaceholder, "Any")
+    }
+
     func testAudioBitrateChoosesAFormatUnderTheCap() {
         let formats = [
             MediaFormat(formatID: "high", ext: "mp3", vcodec: "none", acodec: "mp3", filesize: 4_000_000, abr: 320),

@@ -32,42 +32,46 @@ struct MainView: View {
     var actions: MainActions
     @FocusState private var focused: Bool
     @Environment(\.colorScheme) private var scheme
+    @State private var barHeight: CGFloat = 28
 
     var body: some View {
         VStack(spacing: 0) {
-            titleBar
-            VStack(spacing: 0) {
-                linkField
-                if let clipboardOffer {
-                    clipboardOfferBar(clipboardOffer)
-                        .padding(.top, 8)
-                }
-                content
-                    .padding(.top, 14)
-                controls
-                    .padding(.top, 14)
-                footer
-                    .padding(.top, 18)
+            linkField
+            if let clipboardOffer {
+                clipboardOfferBar(clipboardOffer)
+                    .padding(.top, 8)
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 6)
-            .padding(.bottom, 20)
+            content
+                .padding(.top, 14)
+            controls
+                .padding(.top, 14)
+            footer
+                .padding(.top, 18)
         }
+        .padding(.horizontal, 22)
+        .padding(.top, 8)
+        .padding(.bottom, 20)
         .frame(width: 540)
         .fixedSize(horizontal: true, vertical: true)
         .background {
             background.ignoresSafeArea()
         }
         .overlay(alignment: .top) {
-            // The system title strip sits in the safe area above this view.
-            WindowDragRegion()
-                .frame(height: 28)
+            titleChrome
+                .frame(height: barHeight)
                 .frame(maxWidth: .infinity)
                 .ignoresSafeArea(edges: .top)
+        }
+        .background {
+            TitleBarInsetReader { inset in
+                if abs(inset - barHeight) > 0.5 { barHeight = inset }
+            }
         }
         .onDrop(of: [.url, .plainText, .fileURL], isTargeted: nil) { providers in
             actions.drop(providers)
         }
+        .onAppear(perform: alignQuality)
+        .onChange(of: container) { _, _ in alignQuality() }
     }
 
     private var background: some View {
@@ -84,16 +88,18 @@ struct MainView: View {
             : Color(red: 0.95, green: 0.95, blue: 0.96)
     }
 
-    private var titleBar: some View {
+    /// Title and settings sit in the traffic-light bar, not on a second row.
+    private var titleChrome: some View {
         ZStack {
             titleFill.allowsHitTesting(false)
-            WindowBackground().allowsHitTesting(false)
-            (scheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.62)).allowsHitTesting(false)
+            LayoutMarker(name: "titleBarChrome")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             WindowDragRegion()
             Text("Fetch")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Theme.text)
                 .allowsHitTesting(false)
+                .background(LayoutMarker(name: "windowTitle"))
             HStack {
                 Spacer()
                 Button(action: actions.settings) {
@@ -102,15 +108,27 @@ struct MainView: View {
                         .foregroundStyle(Theme.secondary)
                         .frame(width: 28, height: 28)
                         .contentShape(Rectangle())
+                        .background(LayoutMarker(name: "settingsGear"))
                 }
                 .buttonStyle(.plain)
                 .help("Settings")
                 .accessibilityLabel("Settings")
+                .accessibilityIdentifier("settingsGear")
             }
-            .padding(.trailing, 12)
+            .padding(.trailing, 10)
         }
-        .frame(height: 46)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var shownQuality: Quality {
+        let menu = qualityChoices
+        if menu.contains(quality) { return quality }
+        return Quality.selection(for: container, videoDefault: .best, audioDefault: .best, sourceHeights: sourceHeights)
+    }
+
+    private func alignQuality() {
+        let shown = shownQuality
+        if quality != shown { quality = shown }
     }
 
     private var linkField: some View {
@@ -139,6 +157,7 @@ struct MainView: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Theme.secondary)
                         .frame(width: 20, height: 20)
+                        .contentShape(Circle())
                         .background(Theme.chip, in: Circle())
                 }
                 .buttonStyle(.plain)
@@ -152,6 +171,7 @@ struct MainView: View {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(focused ? Theme.accent : Color.primary.opacity(scheme == .dark ? 0.12 : 0.1), lineWidth: focused ? 1 : 0.5)
         )
+        .background(LayoutMarker(name: "linkFieldChrome"))
         .shadow(color: focused ? Theme.accent.opacity(0.18) : .clear, radius: 0, y: 0)
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -171,17 +191,25 @@ struct MainView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
-            Button("Not now", action: actions.dismissOffer)
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Theme.secondary)
-            Button("Fetch", action: actions.acceptOffer)
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Theme.chip, in: Capsule())
+            Button(action: actions.dismissOffer) {
+                Text("Not now")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button(action: actions.acceptOffer) {
+                Text("Fetch")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .contentShape(Capsule())
+                    .background(Theme.chip, in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -511,15 +539,16 @@ struct MainView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             labeled("Quality") {
-                Picker("Quality", selection: $quality) {
-                    ForEach(qualityChoices) { quality in
-                        Text(quality.title).tag(quality)
+                Picker("Quality", selection: qualityBinding) {
+                    ForEach(qualityChoices) { item in
+                        Text(item.title).tag(item)
                     }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .disabled(!controlsEnabled)
                 .accessibilityIdentifier("qualityPicker")
+                .id(container.id + "-" + shownQuality.rawValue)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             labeled("Max size") {
@@ -531,7 +560,8 @@ struct MainView: View {
                         .disabled(!controlsEnabled || !allowsMaxSize)
                         .accessibilityIdentifier("maxSizeToggle")
                     HStack {
-                        TextField("None", text: $maxSizeText)
+                        TextField(FieldCopy.maxSizePlaceholder, text: $maxSizeText)
+                            .accessibilityLabel("Max size")
                             .textFieldStyle(.plain)
                             .font(.system(size: 13))
                             .multilineTextAlignment(.trailing)
@@ -574,6 +604,9 @@ struct MainView: View {
                         .fontWeight(.medium)
                 }
                 .font(.system(size: 12))
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Save location, \(saveName)")
@@ -602,6 +635,7 @@ struct MainView: View {
             .foregroundStyle(canDownload ? Color.white : Theme.tertiary)
             .padding(.horizontal, 16)
             .frame(height: 30)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .background {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(canDownload ? AnyShapeStyle(downloadGradient) : AnyShapeStyle(Theme.chip))
@@ -620,6 +654,7 @@ struct MainView: View {
                 .foregroundStyle(Theme.text)
                 .padding(.horizontal, 16)
                 .frame(height: 30)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .background(Theme.field.opacity(0.8), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         }
@@ -633,6 +668,7 @@ struct MainView: View {
                 .foregroundStyle(prominent ? Color.white : Theme.text)
                 .padding(.horizontal, 12)
                 .frame(height: 26)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .background {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
                         .fill(prominent ? AnyShapeStyle(downloadGradient) : AnyShapeStyle(Theme.field.opacity(0.85)))
@@ -652,6 +688,13 @@ struct MainView: View {
 
     private var qualityChoices: [Quality] {
         Quality.choices(for: container, sourceHeights: sourceHeights)
+    }
+
+    private var qualityBinding: Binding<Quality> {
+        Binding(
+            get: { shownQuality },
+            set: { quality = $0 }
+        )
     }
 
     private var allowsMaxSize: Bool { !container.isAudioOnly }

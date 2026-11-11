@@ -10,9 +10,25 @@ final class AppModel: ObservableObject {
     @Published var phase: ScreenPhase = .empty
     @Published var container: ContainerFormat { didSet { containerChanged() } }
     /// Saved video default. Clamping one link never writes this.
-    @Published var defaultQuality: Quality { didSet { persist(.quality) } }
+    @Published var defaultQuality: Quality {
+        didSet {
+            if defaultQuality.isAudio {
+                defaultQuality = .best
+                return
+            }
+            persist(.quality)
+        }
+    }
     /// Saved audio default, separate from the video default.
-    @Published var defaultAudioQuality: Quality { didSet { persist(.audioQuality) } }
+    @Published var defaultAudioQuality: Quality {
+        didSet {
+            if defaultAudioQuality != .best && !defaultAudioQuality.isAudio {
+                defaultAudioQuality = .best
+                return
+            }
+            persist(.audioQuality)
+        }
+    }
     /// The choice for the link on screen. Not the Settings default.
     @Published var quality: Quality { didSet { refreshPlan() } }
     @Published var maxSizeEnabled: Bool { didSet { persist(.maxSize); refreshPlan() } }
@@ -50,12 +66,14 @@ final class AppModel: ObservableObject {
 
     private init() {
         let storedContainer = defaults.string(forKey: Key.container.rawValue).flatMap(ContainerFormat.init(rawValue:)) ?? .mp4H264
-        let storedQuality = defaults.string(forKey: Key.quality.rawValue).flatMap(Quality.init(rawValue:)) ?? .best
+        let videoRaw = defaults.string(forKey: Key.quality.rawValue)
+        let audioRaw = defaults.string(forKey: Key.audioQuality.rawValue)
+        let videoDefault = Quality.videoDefault(stored: videoRaw)
+        let audioDefault = Quality.audioDefault(stored: audioRaw, legacyVideoKey: videoRaw)
         container = storedContainer
-        defaultQuality = storedQuality
-        let storedAudio = defaults.string(forKey: Key.audioQuality.rawValue).flatMap(Quality.init(rawValue:)) ?? .best
-        defaultAudioQuality = storedAudio.isAudio || storedAudio == .best ? storedAudio : .best
-        quality = storedQuality
+        defaultQuality = videoDefault
+        defaultAudioQuality = audioDefault
+        quality = Quality.selection(for: storedContainer, videoDefault: videoDefault, audioDefault: audioDefault, sourceHeights: [])
         let storedMaxSize = defaults.object(forKey: Key.maxSize.rawValue) as? Bool ?? false
         let storedMaxMB = defaults.object(forKey: Key.maxSizeMB.rawValue) as? Int ?? 25
         maxSizeEnabled = storedMaxSize
@@ -74,6 +92,13 @@ final class AppModel: ObservableObject {
                 ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         }
         restoring = false
+        if let videoRaw, videoRaw != defaultQuality.rawValue {
+            persist(.quality)
+        }
+        let legacyWasAudio = videoRaw.flatMap(Quality.init(rawValue:))?.isAudio == true
+        if audioRaw != defaultAudioQuality.rawValue, audioRaw != nil || legacyWasAudio {
+            persist(.audioQuality)
+        }
         clipboard.onURL = { [weak self] url in
             Task { @MainActor in self?.offerClipboard(url) }
         }
@@ -141,13 +166,15 @@ final class AppModel: ObservableObject {
         let token = generation
         cookies.clear()
         clipboardOffer = nil
-        if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            info = nil
-            plan = nil
-            phase = .empty
-            return
-        }
+        // Drop the previous card before the paste debounce. Download stays off
+        // until the new link resolves.
+        info = nil
+        plan = nil
+        thumbnail = nil
+        thumbTask?.cancel()
         work?.cancel()
+        phase = .empty
+        guard !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         work = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled else { return }
@@ -173,8 +200,7 @@ final class AppModel: ObservableObject {
     private func containerChanged() {
         persist(.container)
         guard !isResolving else { return }
-        let base = container.isAudioOnly ? defaultAudioQuality : defaultQuality
-        let next = base.sanitized(for: container, sourceHeights: sourceHeights)
+        let next = Quality.selection(for: container, videoDefault: defaultQuality, audioDefault: defaultAudioQuality, sourceHeights: sourceHeights)
         if quality != next {
             quality = next
         } else {
@@ -391,8 +417,7 @@ final class AppModel: ObservableObject {
             self.info = info
             self.thumbnail = nil
             self.retriedEngine = false
-            let base = container.isAudioOnly ? defaultAudioQuality : defaultQuality
-            let fitted = base.sanitized(for: container, sourceHeights: sourceHeights)
+            let fitted = Quality.selection(for: container, videoDefault: defaultQuality, audioDefault: defaultAudioQuality, sourceHeights: sourceHeights)
             if quality != fitted {
                 quality = fitted
             } else {

@@ -67,21 +67,90 @@ struct WindowDragRegion: NSViewRepresentable {
 }
 
 enum TitlebarActions {
+    enum Action: String {
+        case none, minimize, zoom
+    }
+
+    /// Set by the double-click handler so the title-bar check can see that it ran.
+    static var performed: Action?
+
     /// Uses System Settings → Desktop & Dock → “Double-click a window’s title bar to”.
     static func doubleClick(_ window: NSWindow?) {
         guard let window else { return }
         switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize" {
         case "None":
-            break
+            performed = .none
         case "Minimize":
+            performed = .minimize
             window.miniaturize(nil)
         default:
+            performed = .zoom
             window.zoom(nil)
         }
     }
 }
 
+/// A non-interactive view whose frame the title-bar and hit-target checks measure.
+struct LayoutMarker: NSViewRepresentable {
+    var name: String
+
+    func makeNSView(context: Context) -> LayoutMarkerView {
+        let view = LayoutMarkerView()
+        view.markerName = name
+        return view
+    }
+
+    func updateNSView(_ view: LayoutMarkerView, context: Context) {
+        view.markerName = name
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: LayoutMarkerView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
+    }
+}
+
+private final class PassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+final class LayoutMarkerView: NSView {
+    var markerName: String = "" {
+        didSet { identifier = NSUserInterfaceItemIdentifier(markerName) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    static func find(_ name: String, in root: NSView) -> LayoutMarkerView? {
+        if let marker = root as? LayoutMarkerView, marker.markerName == name { return marker }
+        for child in root.subviews {
+            if let found = find(name, in: child) { return found }
+        }
+        return nil
+    }
+}
+
+/// Reads the window's top safe area, which is the traffic-light bar.
+struct TitleBarInsetReader: NSViewRepresentable {
+    var onInset: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        PassthroughView()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let report = onInset
+        DispatchQueue.main.async {
+            let inset = view.window?.contentView?.safeAreaInsets.top ?? 0
+            guard inset > 12 else { return }
+            report(inset)
+        }
+    }
+}
+
 enum TitlebarCheck {
+    private static var chromeGap: CGFloat = 0
+
     static func run(saving screenshot: URL) {
         func finish() {
             guard let window = NSApp.windows.first(where: { $0.isVisible && ($0.title == "Fetch" || $0.identifier?.rawValue == "main") }) else {
@@ -94,6 +163,7 @@ enum TitlebarCheck {
             guard let content = window.contentView else { fail("no content view", screenshot) }
             guard let drag = titleDragView(in: content) else { fail("title drag region was not hit", screenshot) }
             guard !bodyContainsDragView(content) else { fail("empty window body is draggable", screenshot) }
+            assertChrome(window, content: content, screenshot: screenshot)
 
             let before = window.frame.origin
             let anchor = drag.convert(NSPoint(x: drag.bounds.midX, y: drag.bounds.midY), to: nil)
@@ -119,31 +189,44 @@ enum TitlebarCheck {
             let setting = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") ?? "Maximize"
             let zoomBefore = window.frame
             let miniBefore = window.isMiniaturized
-            drag.mouseDown(with: mouseEvent(.leftMouseDown, anchor, window: window, clicks: 2))
+            TitlebarActions.performed = nil
+            window.sendEvent(mouseEvent(.leftMouseDown, anchor, window: window, clicks: 2))
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let performed = TitlebarActions.performed
             var zoomNote = setting
             switch setting {
             case "None":
+                guard performed == .none else {
+                    fail("double-click did not take the None action (performed \(performed?.rawValue ?? "nothing"))", screenshot)
+                }
                 guard window.frame == zoomBefore, window.isMiniaturized == miniBefore else {
                     fail("double-click ignored the None setting", screenshot)
                 }
                 zoomNote = "None"
             case "Minimize":
+                guard performed == .minimize else {
+                    fail("double-click did not take the Minimize action (performed \(performed?.rawValue ?? "nothing"))", screenshot)
+                }
                 guard window.isMiniaturized else { fail("double-click did not minimize", screenshot) }
                 window.deminiaturize(nil)
                 zoomNote = "Minimize"
             default:
-                if !window.styleMask.contains(.resizable) {
-                    guard !window.isMiniaturized else { fail("double-click minimized a fixed-size window", screenshot) }
-                    if window.isZoomed { window.zoom(nil) }
-                    window.setFrame(zoomBefore, display: true)
-                    zoomNote = window.frame == zoomBefore ? "fixed_size_no_zoom" : "Maximize"
-                } else if window.isZoomed || window.frame != zoomBefore {
+                guard performed == .zoom else {
+                    fail("double-click did not request zoom (performed \(performed?.rawValue ?? "nothing"))", screenshot)
+                }
+                if window.styleMask.contains(.resizable) {
+                    guard window.isZoomed || window.frame != zoomBefore else {
+                        fail("double-click did not zoom a resizable window", screenshot)
+                    }
                     if window.isZoomed { window.zoom(nil) }
                     window.setFrame(zoomBefore, display: true)
                     zoomNote = "Maximize"
                 } else {
-                    fail("double-click did not zoom", screenshot)
+                    guard !window.isMiniaturized else { fail("double-click minimized a fixed-size window", screenshot) }
+                    guard window.frame == zoomBefore else {
+                        fail("zoom changed a fixed-size window", screenshot)
+                    }
+                    zoomNote = "fixed_size_no_zoom"
                 }
             }
 
@@ -172,10 +255,55 @@ enum TitlebarCheck {
             }
             let light = alphas["light"] ?? 0
             let dark = alphas["dark"] ?? 0
-            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@", light, dark, dx, dy, zoomNote))
+            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@ chrome_gap=%.1f", light, dark, dx, dy, zoomNote, chromeGap))
             NSApp.terminate(nil)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: finish)
+    }
+
+    private static func assertChrome(_ window: NSWindow, content: NSView, screenshot: URL) {
+        let lights = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+        guard lights.count == 3 else { fail("traffic lights are missing", screenshot) }
+        guard let bar = LayoutMarkerView.find("titleBarChrome", in: content) else { fail("title bar marker missing", screenshot) }
+        guard let title = LayoutMarkerView.find("windowTitle", in: content) else { fail("window title missing from the title bar", screenshot) }
+        guard let gear = LayoutMarkerView.find("settingsGear", in: content) else { fail("settings gear missing from the title bar", screenshot) }
+        guard let link = LayoutMarkerView.find("linkFieldChrome", in: content) else { fail("link field missing", screenshot) }
+        let barRect = bar.convert(bar.bounds, to: nil)
+        let titleRect = title.convert(title.bounds, to: nil)
+        let gearRect = gear.convert(gear.bounds, to: nil)
+        let linkRect = link.convert(link.bounds, to: nil)
+        guard titleRect.width > 8, gearRect.width > 8, barRect.height > 8 else {
+            fail("title bar frames are empty", screenshot)
+        }
+        for light in lights {
+            let rect = light.convert(light.bounds, to: nil)
+            guard verticalOverlap(titleRect, rect) else {
+                fail("title does not share a row with the traffic lights \(rect) vs \(titleRect)", screenshot)
+            }
+            guard verticalOverlap(gearRect, rect) else {
+                fail("gear does not share a row with the traffic lights \(rect) vs \(gearRect)", screenshot)
+            }
+        }
+        let gap = barRect.minY - linkRect.maxY
+        guard gap <= 12, gap >= -1 else {
+            fail(String(format: "paste field is %.1f pt from the title bar", gap), screenshot)
+        }
+        chromeGap = gap
+        let origin = window.frame.origin
+        let gearPoint = gear.convert(NSPoint(x: gear.bounds.midX, y: gear.bounds.midY), to: nil)
+        window.sendEvent(mouseEvent(.leftMouseDown, gearPoint, window: window, clicks: 1))
+        let dragged = NSPoint(x: gearPoint.x + 30, y: gearPoint.y + 16)
+        window.sendEvent(mouseEvent(.leftMouseDragged, dragged, window: window, clicks: 1))
+        window.sendEvent(mouseEvent(.leftMouseUp, dragged, window: window, clicks: 1))
+        let moved = hypot(window.frame.origin.x - origin.x, window.frame.origin.y - origin.y)
+        if moved > 1.5 {
+            window.setFrameOrigin(origin)
+            fail(String(format: "settings gear started a drag (%.1f pt)", moved), screenshot)
+        }
+    }
+
+    private static func verticalOverlap(_ a: NSRect, _ b: NSRect) -> Bool {
+        min(a.maxY, b.maxY) - max(a.minY, b.minY) > 1
     }
 
     /// CGImage row 0 is the top of the window. Sample those rows, not the bottom.

@@ -136,6 +136,38 @@ public enum Quality: String, Codable, CaseIterable, Sendable, Identifiable {
         let lower = menu.filter { $0.maxHeight != nil && ($0.maxHeight ?? 0) <= (maxHeight ?? 0) }
         return lower.max { ($0.maxHeight ?? 0) < ($1.maxHeight ?? 0) } ?? .best
     }
+
+    /// A video Settings default. A bitrate saved under the old video key is not a video step.
+    public static func videoDefault(stored raw: String?) -> Quality {
+        guard let raw, let quality = Quality(rawValue: raw), !quality.isAudio else { return .best }
+        return quality
+    }
+
+    /// An audio Settings default. A bitrate left on the old video key is kept as the audio default.
+    public static func audioDefault(stored raw: String?, legacyVideoKey: String?) -> Quality {
+        if let raw, let quality = Quality(rawValue: raw), quality.isAudio || quality == .best {
+            return quality
+        }
+        if let legacyVideoKey, let legacy = Quality(rawValue: legacyVideoKey), legacy.isAudio {
+            return legacy
+        }
+        return .best
+    }
+
+    /// The Quality value for a format. Always one of `choices`, so the popup has a title.
+    public static func selection(for container: ContainerFormat, videoDefault: Quality, audioDefault: Quality, sourceHeights: [Int]) -> Quality {
+        let menu = choices(for: container, sourceHeights: sourceHeights)
+        let base = container.isAudioOnly ? audioDefault : videoDefault
+        let fitted = base.sanitized(for: container, sourceHeights: sourceHeights)
+        if menu.contains(fitted) { return fitted }
+        return menu.first ?? .best
+    }
+}
+
+/// Copy for fields that are not a format choice.
+public enum FieldCopy {
+    /// Shown in the max-size field when the cap is off, beside the MB label.
+    public static let maxSizePlaceholder = "Any"
 }
 
 public enum WatermarkKind: String, Equatable, Sendable {

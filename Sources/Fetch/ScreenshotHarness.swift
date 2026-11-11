@@ -93,11 +93,23 @@ enum ScreenshotHarness {
         hosting.layoutSubtreeIfNeeded()
         var height = hosting.fittingSize.height
         if height < 200 || height > 900 { height = 460 }
-        let size = NSSize(width: width, height: height)
+        let inset = window.contentView?.safeAreaInsets.top ?? 0
+        let size = NSSize(width: width, height: height + inset)
         hosting.frame = NSRect(origin: .zero, size: size)
         window.setContentSize(size)
+        window.hasShadow = false
         window.displayIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+
+        if let cgImage = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) {
+            let rep = NSBitmapImageRep(cgImage: cgImage)
+            let image = NSImage(size: NSSize(width: cgImage.width, height: cgImage.height))
+            image.addRepresentation(rep)
+            if !isMostlyBlank(image) {
+                window.orderOut(nil)
+                return image
+            }
+        }
 
         if let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
             hosting.cacheDisplay(in: hosting.bounds, to: rep)

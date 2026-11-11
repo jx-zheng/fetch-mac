@@ -145,6 +145,17 @@ else
 fi
 
 log ""
+log "Settings tabs accept a click in the padding"
+if "$BIN" --settings-hitbox > "$OUT/hitbox.txt" 2>"$OUT/hitbox.err"; then
+  cat "$OUT/hitbox.txt" | tee -a "$REPORT"
+else
+  log "Settings hitbox check failed"
+  cat "$OUT/hitbox.err" | tee -a "$REPORT" || true
+  cat "$OUT/hitbox.txt" | tee -a "$REPORT" || true
+  exit 1
+fi
+
+log ""
 log "YouTube metadata"
 YOUTUBE_URL=""
 for candidate in \

@@ -34,23 +34,7 @@ struct SettingsView: View {
                 .frame(height: 46)
             HStack(spacing: 6) {
                 ForEach(SettingsTab.allCases) { item in
-                    Button {
-                        tab = item
-                    } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: item.symbol)
-                                .font(.system(size: 14))
-                            Text(item.title)
-                                .font(.system(size: 11))
-                        }
-                        .foregroundStyle(tab == item ? Theme.accent : Theme.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(tab == item ? Theme.chip : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.title)
-                    .accessibilityAddTraits(tab == item ? .isSelected : [])
+                    tabButton(item)
                 }
             }
             .padding(.bottom, 10)
@@ -83,6 +67,47 @@ struct SettingsView: View {
         }
     }
 
+    private func tabButton(_ item: SettingsTab) -> some View {
+        Button {
+            tab = item
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 14))
+                    .background(LayoutMarker(name: "settings-tab-\(item.rawValue)-icon"))
+                Text(item.title)
+                    .font(.system(size: 11))
+                    .background(LayoutMarker(name: "settings-tab-\(item.rawValue)-label"))
+            }
+            .foregroundStyle(tab == item ? Theme.accent : Theme.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(minWidth: 88, minHeight: 48)
+            .contentShape(Rectangle())
+            .background { LayoutMarker(name: "settings-tab-\(item.rawValue)") }
+            .background(tab == item ? Theme.chip : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel(item.title)
+        .accessibilityIdentifier("settings-tab-\(item.rawValue)")
+        .accessibilityAddTraits(tab == item ? .isSelected : [])
+    }
+
+    private var videoQuality: Binding<Quality> {
+        Binding(
+            get: { Quality.videoDefault(stored: model.defaultQuality.rawValue) },
+            set: { model.defaultQuality = $0 }
+        )
+    }
+
+    private var audioQuality: Binding<Quality> {
+        Binding(
+            get: { Quality.audioDefault(stored: model.defaultAudioQuality.rawValue, legacyVideoKey: nil) },
+            set: { model.defaultAudioQuality = $0 }
+        )
+    }
+
     private var general: some View {
         VStack(spacing: 0) {
             row("Save to") {
@@ -101,6 +126,7 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 10)
                     .frame(width: 180, height: 28)
+                    .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .background(Theme.field.opacity(0.8), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                 }
@@ -135,6 +161,7 @@ struct SettingsView: View {
                         .foregroundStyle(Theme.text)
                         .padding(.horizontal, 12)
                         .frame(height: 26)
+                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .background(Theme.field.opacity(0.8), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                 }
@@ -142,6 +169,7 @@ struct SettingsView: View {
                 .disabled(model.engineBusy)
             }
         }
+        .background(LayoutMarker(name: "settings-pane-general"))
     }
 
     private var downloads: some View {
@@ -156,7 +184,7 @@ struct SettingsView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Picker("Video quality", selection: $model.defaultQuality) {
+                Picker("Video quality", selection: videoQuality) {
                     ForEach(Quality.choices(for: .mp4H264, sourceHeights: [])) { quality in
                         Text(quality.title).tag(quality)
                     }
@@ -169,7 +197,7 @@ struct SettingsView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.text)
                 Spacer()
-                Picker("Audio quality", selection: $model.defaultAudioQuality) {
+                Picker("Audio quality", selection: audioQuality) {
                     ForEach(Quality.choices(for: .mp3, sourceHeights: [])) { quality in
                         Text(quality.title).tag(quality)
                     }
@@ -194,11 +222,14 @@ struct SettingsView: View {
             Button(action: model.revealSaveFolder) {
                 Text("Show the save folder in Finder")
                     .font(.system(size: 13))
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.link)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LayoutMarker(name: "settings-pane-downloads"))
     }
 
     private var engine: some View {
@@ -225,6 +256,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LayoutMarker(name: "settings-pane-engine"))
     }
 
     private func versionLine(_ name: String, _ version: String) -> some View {

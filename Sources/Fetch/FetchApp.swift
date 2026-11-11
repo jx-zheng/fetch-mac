@@ -27,6 +27,11 @@ enum FetchEntry {
             NSApplication.shared.run()
             return
         }
+        if arguments.contains("--settings-hitbox") {
+            AppFlags.skipEngineUpdate = true
+            SettingsHitboxCheck.run()
+            return
+        }
         if let index = arguments.firstIndex(of: "--titlebar-check"), arguments.indices.contains(index + 1) {
             AppFlags.titlebarCheckURL = arguments[index + 1]
             AppFlags.skipEngineUpdate = true

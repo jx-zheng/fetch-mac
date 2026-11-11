@@ -1,72 +1,152 @@
-# Fetch
+<p align="center">
+  <img src="design/icon-approved.png" alt="Fetch" width="128" height="128">
+</p>
 
-A small Mac app for saving a video from a link. Paste or drop a URL, check the preview, and download it to the folder you choose. Fetch is a native SwiftUI app for macOS 14 and later. It bundles [yt-dlp](https://github.com/yt-dlp/yt-dlp), ffmpeg, and [Deno](https://deno.com) (yt-dlp needs a JavaScript runtime for YouTube).
+<h1 align="center">Fetch</h1>
 
-The first build is signed ad hoc, for the owner’s own Mac. It is not notarized.
+<p align="center">Save a video from a link.</p>
+
+Fetch is a native macOS app. Paste or drop a public video URL, check the preview, and download the file to a folder you choose. It is built with SwiftUI and keeps the download engine on your Mac.
+
+## Screenshots
+
+The main window and Settings, in light and dark. These are renders of the app, not mockups.
+
+<p align="center">
+  <img src="docs/screenshots/main-light.png" alt="Fetch main window, light" width="440">
+  <img src="docs/screenshots/main-dark.png" alt="Fetch main window, dark" width="440">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings-light.png" alt="Fetch settings, light" width="420">
+  <img src="docs/screenshots/settings-dark.png" alt="Fetch settings, dark" width="420">
+</p>
+
+## Features
+
+- One window for the link, the preview, the format, the quality, and the download.
+- Formats: MP4 (H.264 or HEVC), MOV, WebM, MKV, M4A, and MP3.
+- Video quality offers only the resolutions the source actually has. Audio quality is Best or a bitrate (320, 256, 192, or 128 kbps).
+- An optional size cap. When the best file is larger than the cap, Fetch picks a smaller format that fits, or re-encodes with the Apple hardware encoder and checks the result.
+- A preview with the title, the site, the duration, the size, and the codecs. A TikTok **No watermark** badge appears only when the chosen stream is the clean Direct copy.
+- Clipboard watching, off until you turn it on. It offers known video hosts and does not start a download until you accept.
+- A menu-bar extra.
+- Cancel stops the download, including ffmpeg.
+- yt-dlp, ffmpeg, ffprobe, and Deno are copied into Application Support, checked against a signed SHA-256, and can update from the published checksums.
+
+## Requirements
+
+- macOS 14 or later
+- An Apple Silicon Mac. The bundled engines are arm64.
+
+You do not install yt-dlp or ffmpeg yourself. The first launch copies them out of the app and checks the checksum recorded at build time. Later launches reuse that copy. A newer yt-dlp is kept only when it matches the published SHA-256. An unchanged version counts as up to date only when the updater exits 0.
 
 ## Install
 
-1. Open the pull request’s **macOS** check and download the **Fetch-macOS** artifact. GitHub wraps it as `Fetch-macOS.zip`. Inside that zip are `Fetch.zip` (the app) and `Fetch.dmg` (the same app on a disk image). Unzip `Fetch.zip` to get `Fetch.app`. Actions artifacts expire after 90 days.
+The build is ad-hoc signed and not notarized. Gatekeeper will block the first open. On macOS 15 and later, right-click **Open** does not bypass that.
+
+1. Download **Fetch-macOS** from the latest [GitHub Actions](https://github.com/jx-zheng/fetch-mac/actions) run, or from [Releases](https://github.com/jx-zheng/fetch-mac/releases) when a release is published. The Actions artifact is a zip named `Fetch-macOS.zip`. Inside it are `Fetch.zip` and `Fetch.dmg`. Unzip `Fetch.zip` to get `Fetch.app`. Actions artifacts expire after 90 days.
 2. Move `Fetch.app` to `/Applications`.
-3. The first time you open it, macOS Gatekeeper will refuse an ad-hoc app that came from the internet. On macOS 15 and later, right-click **Open** no longer bypasses that. Do one of these:
-
-   **Open Anyway**
-
-   - Double-click `Fetch.app` once so Gatekeeper records the refusal.
-   - Go to **System Settings → Privacy & Security**, scroll to the security section, and click **Open Anyway**.
-
-   **Or clear quarantine in Terminal**
-
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Fetch.app
-   ```
-
-4. Fetch copies yt-dlp, ffmpeg, ffprobe, and Deno into `~/Library/Application Support/Fetch/bin` the first time, and again after an update. It checks the signed SHA-256 recorded at build time, then remembers the file’s path, size, modification time, and inode so later launches do not hash the tools again. A new yt-dlp is checked against the published `SHA2-256SUMS` before Fetch keeps it. “Already up to date” is a successful check. The engines are Apple Silicon only.
-
-## Using it
-
-Clipboard watching is off until you turn it on in Settings. When it is on, copying a link from YouTube, TikTok, Instagram, X, Reddit, or Vimeo offers **Fetch this?** Fetch does not start the download until you accept.
-
-Safari cookies are off unless you choose them on a sign-in error, and that choice applies to the next request only. Reading Safari’s cookies needs Full Disk Access: **System Settings → Privacy & Security → Full Disk Access**, then turn Fetch on. The error card opens that pane.
-
-Paste a video link, or drop one on the window. Fetch shows the title, site, duration, size, and codecs. **No watermark** appears only when the chosen TikTok format is a Direct / `play_addr` stream, not the watermarked download. YouTube, Vimeo, Reddit, and X do not get that badge.
-
-- **Format:** MP4/H.264, MP4/HEVC, MOV, WebM, MKV, M4A, or MP3.
-- **Quality:** Best, 2160p, 1080p, 720p, or 480p.
-- **Max size:** when the best file is larger than the cap, Fetch picks a smaller format that fits. If none does, or the file is small but is not already H.264/AAC (or HEVC/AAC for the HEVC choice), it re-encodes with the Apple hardware encoder (`h264_videotoolbox` / `hevc_videotoolbox`) at a bitrate computed from the cap, checks the file size, and retries a little smaller if it is still over.
-- **Save to:** Downloads, unless you pick another folder. The gear opens settings: clipboard watching, the menu bar extra, and engine updates. The update buttons remember stable or nightly for the daily check.
-- A sign-in error can use your Safari cookies for that one request (`--cookies-from-browser safari`). Nothing is sent anywhere except to the site you are downloading from.
-- Cancel puts yt-dlp in its own process group and stops that group, including ffmpeg.
-
-Clipboard watching reads the pasteboard change count about once a second, and only when the setting is on. It does not poll during a download’s progress; progress comes from the process pipes.
-
-## Develop
-
-The app is a Swift package. `FetchCore` (format choice, size math, URLs, file names, errors, progress parsing) builds on Linux with Swift 6. The Mac app target is macOS 14 only. Tests:
+3. Open it once so Gatekeeper records the refusal. Then either:
+   - **System Settings → Privacy & Security → Open Anyway**, or
+   - clear the quarantine flag:
 
 ```bash
-swift test
+xattr -dr com.apple.quarantine /Applications/Fetch.app
 ```
 
-A real app, screenshots, and downloads are built on a Mac by GitHub Actions (`.github/workflows/macos.yml`, `macos-15`). That workflow downloads the arm64 engines, checks their published checksums before signing, builds and ad-hoc signs `Fetch.app`, writes light and dark screenshots, runs the yt-dlp update once, records a 30 second cold launch and a 30 second warm launch with the clipboard watcher and menu bar on, downloads a short public video, re-encodes it under a size cap, tries TikTok when the runner can reach it, and cancels a download while ffmpeg is running.
+## Usage
 
-From a Mac you can do the same locally:
+Paste a video link into the field, or drop one on the window. Fetch shows a preview when it can read the page. **Download** stays off until that preview is ready. Changing the link clears the previous preview immediately, including while a new link is still being resolved.
+
+The title and the settings button sit in the window’s title bar, on the same row as the traffic lights. Drag empty space in that bar to move the window. Double-click follows the system setting for the title bar (zoom, minimize, or nothing). The settings button does not drag the window.
+
+- **Format** chooses the container and whether the file is video or audio.
+- **Quality** follows the format. Video lists Best and the resolutions the source reaches. Audio lists Best and bitrates. The menu always shows a selection.
+- **Max size** is off until you turn it on. With it off, the field reads **Any MB**. With it on, type a size in megabytes. Audio formats ignore the cap.
+- **Saves to** is your Downloads folder until you pick another one. The gear opens Settings.
+
+A sign-in error can offer your Safari cookies for that one link. Reading those cookies needs Full Disk Access (**System Settings → Privacy & Security → Full Disk Access**). The error card opens that pane. The choice covers the info fetch and the download of that link, then it turns off.
+
+## Settings
+
+Settings has three tabs: General, Downloads, and Engine. The whole tab tile is clickable, including the padding around the icon and the title.
+
+**General**
+
+- **Save to** picks the folder.
+- **Default format** is the format used for a new link.
+- **Watch the clipboard** offers a link you copy from YouTube, TikTok, Instagram, X, Reddit, or Vimeo. It does not download until you accept.
+- **Show in menu bar** keeps Fetch in the menu bar.
+- **Check now** looks for an engine update.
+
+**Downloads**
+
+- **Video quality** is the saved default for video formats (Best, 2160p, 1080p, 720p, or 480p). A new link starts from this and snaps down when the source is shorter. That snap does not overwrite the default.
+- **Audio quality** is a separate default (Best or a bitrate).
+- **Max size** is the default cap. Files are named from the video title. Characters that do not belong in a file name are removed, and Fetch does not write outside the folder you pick.
+
+**Engine**
+
+yt-dlp, ffmpeg, and Deno live in Application Support so the engine can update itself. **Update stable** is the normal channel. **Update nightly** is for a site that changed before the stable engine can read it. Fetch checks the published SHA-256 before it runs a new build.
+
+## Build from source
+
+The app is a Swift package. You need macOS 14 or later, Xcode, and Python 3.
 
 ```bash
 python3 Scripts/fetch_engines.py
 bash Scripts/build-app.sh
-artifacts/Fetch.app/Contents/MacOS/Fetch --screenshots /tmp/fetch-screens
+```
+
+`Scripts/fetch_engines.py` downloads the arm64 engines and checks their published checksums. `Scripts/build-app.sh` builds `Fetch.app`, ad-hoc signs it, and writes `artifacts/Fetch.zip` and `artifacts/Fetch.dmg`.
+
+Screenshots and the end-to-end checks:
+
+```bash
+artifacts/Fetch.app/Contents/MacOS/Fetch --screenshots artifacts/screenshots
 bash Scripts/e2e.sh
 ```
 
-`Fetch --cli version`, `Fetch --cli metadata <url>`, `Fetch --cli update stable`, and `Fetch --cli download <url> --output <dir> [--max-mb N] [--limit-rate 80K]` drive the engine without the window.
+The same binary can drive the engine without the window:
+
+```bash
+Fetch --cli version
+Fetch --cli metadata <url>
+Fetch --cli update stable
+Fetch --cli download <url> --output <directory> [--max-mb N] [--limit-rate 80K]
+```
+
+## Project structure
+
+| Path | What it is |
+| --- | --- |
+| `Sources/FetchCore` | URLs, file names, formats, quality, size math, progress parsing, and errors. Builds on Linux. |
+| `Sources/Fetch` | The SwiftUI app, the download engine, and the window. macOS 14 and later. |
+| `Tests/FetchCoreTests` | Unit tests for FetchCore. |
+| `Scripts` | Engine download, app build, and the end-to-end script. |
+| `Fetch` | The app icon set. |
+| `design/icon-approved.png` | The approved icon artwork. |
+| `.github/workflows/macos.yml` | CI. |
+
+## Testing and CI
+
+Pull requests run two jobs. **FetchCore** runs the unit tests on Linux with Swift 6.2. **macOS** runs only after that job passes. It builds the app on `macos-15`, downloads the engines, takes screenshots, and runs `Scripts/e2e.sh`.
+
+That script checks the engine update, a 30 second cold launch and a 30 second warm launch (mean CPU from 10s to 30s at or below 2%, and a flat memory footprint), the title bar (opaque, draggable, title and settings on the traffic-light row), Settings tab hit targets, a real download, a re-encode under a size cap, and cancel while ffmpeg is running.
+
+```bash
+swift test --filter FetchCoreTests
+```
 
 ## Limits
 
-- One video at a time. Playlists are ignored (`--no-playlist`).
-- A burned-in watermark cannot be removed. Some TikTok regions only offer a `play` format that may still have a watermark or end card; the badge stays off in that case.
-- Some TikTok `bytevc1` files have no audio. Fetch probes the result and, when that happens, tries an H.264 format that includes audio.
-- Instagram and other private posts need a browser sign-in. Safari cookies on recent macOS often require Full Disk Access for the app.
-- WebM uses a software VP9 encoder. H.264 and HEVC use VideoToolbox, and fall back to libx264 / libx265 if VideoToolbox refuses the file.
-- YouTube sometimes asks a datacenter address to sign in. Fetch then tries the TV, iOS, and mobile web clients. A home connection usually gets the normal web client. If every client asks for a sign-in, use the Safari button on the error. GitHub-hosted runners hit that wall, so the automated download test falls back to a public sample file there while still attempting YouTube.
-- There is no telemetry. Fetch does not phone home except for the download itself, thumbnail images, and the daily yt-dlp update check. Remote YouTube solver components (`ejs:github`, `ejs:npm`) are not requested; the bundled yt-dlp already includes its script runtime.
+- One video at a time. Playlists are ignored.
+- A burned-in watermark cannot be removed.
+- Some private posts need a browser sign-in. Safari cookies on recent macOS need Full Disk Access.
+- WebM uses a software VP9 encoder. H.264 and HEVC use VideoToolbox, and fall back to a software encoder if VideoToolbox refuses the file.
+- YouTube sometimes asks a datacenter address to sign in. A home connection usually does not. There is no telemetry. Fetch does not phone home except for the download itself, thumbnail images, and the engine update check.
+
+## License
+
+Fetch is released under the [MIT License](LICENSE).
