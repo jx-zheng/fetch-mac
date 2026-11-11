@@ -253,9 +253,12 @@ enum TitlebarCheck {
                     if name == "light" { try? png.write(to: screenshot) }
                 }
             }
+            let settingsGap = MainActor.assumeIsolated {
+                assertSettingsChrome(screenshot: screenshot)
+            }
             let light = alphas["light"] ?? 0
             let dark = alphas["dark"] ?? 0
-            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@ chrome_gap=%.1f", light, dark, dx, dy, zoomNote, chromeGap))
+            print(String(format: "TITLEBAR_OK light_alpha=%.2f dark_alpha=%.2f drag_dx=%.0f drag_dy=%.0f double_click=%@ chrome_gap=%.1f settings_gap=%.1f", light, dark, dx, dy, zoomNote, chromeGap, settingsGap))
             NSApp.terminate(nil)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: finish)
@@ -300,6 +303,63 @@ enum TitlebarCheck {
             window.setFrameOrigin(origin)
             fail(String(format: "settings gear started a drag (%.1f pt)", moved), screenshot)
         }
+    }
+
+    /// The Settings pane title shares the traffic-light row, and the tabs sit just under that bar.
+    @MainActor
+    private static func assertSettingsChrome(screenshot: URL) -> CGFloat {
+        let host = NSHostingView(rootView: SettingsView(model: AppModel.shared).frame(width: 500))
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 520),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Settings"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = false
+        window.contentView = host
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        for _ in 0..<8 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        host.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        defer { window.orderOut(nil) }
+
+        let lights = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { window.standardWindowButton($0) }
+        guard lights.count == 3, lights.allSatisfy({ !$0.isHidden }) else {
+            fail("settings traffic lights are missing", screenshot)
+        }
+        guard let content = window.contentView else { fail("settings window has no content", screenshot) }
+        guard let bar = LayoutMarkerView.find("settingsTitleBar", in: content) else {
+            fail("settings title bar marker missing", screenshot)
+        }
+        guard let title = LayoutMarkerView.find("settingsPaneTitle", in: content) else {
+            fail("settings pane title is missing from the title bar", screenshot)
+        }
+        guard let tabs = LayoutMarkerView.find("settingsTabRow", in: content) else {
+            fail("settings tabs are missing", screenshot)
+        }
+        let titleRect = title.convert(title.bounds, to: nil)
+        let barRect = bar.convert(bar.bounds, to: nil)
+        let tabRect = tabs.convert(tabs.bounds, to: nil)
+        guard titleRect.width > 8, barRect.height > 8, tabRect.height > 8 else {
+            fail("settings title bar frames are empty", screenshot)
+        }
+        for light in lights {
+            let rect = light.convert(light.bounds, to: nil)
+            guard verticalOverlap(titleRect, rect) else {
+                fail("settings title does not share a row with the traffic lights \(rect) vs \(titleRect)", screenshot)
+            }
+        }
+        let gap = barRect.minY - tabRect.maxY
+        guard gap <= 12, gap >= -1 else {
+            fail(String(format: "settings tabs are %.1f pt from the title bar", gap), screenshot)
+        }
+        return gap
     }
 
     private static func verticalOverlap(_ a: NSRect, _ b: NSRect) -> Bool {

@@ -24,19 +24,18 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject var model: AppModel
     @State private var tab: SettingsTab = .general
+    @State private var barHeight: CGFloat = 28
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(tab.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.text)
-                .frame(height: 46)
             HStack(spacing: 6) {
                 ForEach(SettingsTab.allCases) { item in
                     tabButton(item)
                 }
             }
+            .background(LayoutMarker(name: "settingsTabRow"))
+            .padding(.top, 8)
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity)
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.separator).frame(height: 0.5) }
@@ -61,10 +60,38 @@ struct SettingsView: View {
             .ignoresSafeArea()
         }
         .overlay(alignment: .top) {
-            WindowDragRegion()
-                .frame(height: 28)
+            settingsTitleChrome
+                .frame(height: barHeight)
+                .frame(maxWidth: .infinity)
                 .ignoresSafeArea(edges: .top)
         }
+        .background {
+            TitleBarInsetReader { inset in
+                if abs(inset - barHeight) > 0.5 { barHeight = inset }
+            }
+        }
+    }
+
+    /// The pane title sits on the traffic-light row, same as the main window.
+    private var settingsTitleChrome: some View {
+        ZStack {
+            titleFill.allowsHitTesting(false)
+            LayoutMarker(name: "settingsTitleBar")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            WindowDragRegion()
+            Text(tab.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .allowsHitTesting(false)
+                .background(LayoutMarker(name: "settingsPaneTitle"))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var titleFill: Color {
+        scheme == .dark
+            ? Color(red: 0.11, green: 0.11, blue: 0.12)
+            : Color(red: 0.95, green: 0.95, blue: 0.96)
     }
 
     private func tabButton(_ item: SettingsTab) -> some View {

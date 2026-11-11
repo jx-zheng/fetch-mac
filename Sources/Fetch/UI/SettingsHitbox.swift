@@ -81,6 +81,9 @@ enum SettingsHitboxCheck {
         host.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         if LayoutMarkerView.find("settings-pane-\(tab)", in: host) == nil, let hit = window.contentView?.hitTest(point) {
+            let message = "HITBOX_FALLBACK \(tab) direct mouseDown on \(type(of: hit))\n"
+            FileHandle.standardOutput.write(Data(message.utf8))
+            FileHandle.standardError.write(Data(message.utf8))
             hit.mouseDown(with: down)
             hit.mouseUp(with: up)
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))

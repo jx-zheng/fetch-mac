@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="design/icon-approved.png" alt="Fetch" width="128" height="128">
+  <img src="design/icon-master.png" alt="Fetch" width="128" height="128">
 </p>
 
 <h1 align="center">Fetch</h1>
