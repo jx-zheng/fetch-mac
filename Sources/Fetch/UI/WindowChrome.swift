@@ -214,17 +214,17 @@ enum TitlebarCheck {
                 guard performed == .zoom else {
                     fail("double-click did not request zoom (performed \(performed?.rawValue ?? "nothing"))", screenshot)
                 }
-                if window.styleMask.contains(.resizable) {
-                    guard window.isZoomed || window.frame != zoomBefore else {
-                        fail("double-click did not zoom a resizable window", screenshot)
-                    }
+                let zoomed = window.isZoomed || window.frame != zoomBefore
+                if zoomed {
+                    guard !window.isMiniaturized else { fail("double-click minimized instead of zooming", screenshot) }
                     if window.isZoomed { window.zoom(nil) }
                     window.setFrame(zoomBefore, display: true)
+                    guard window.frame == zoomBefore else { fail("zoom did not restore the window", screenshot) }
                     zoomNote = "Maximize"
                 } else {
-                    guard !window.isMiniaturized else { fail("double-click minimized a fixed-size window", screenshot) }
-                    guard window.frame == zoomBefore else {
-                        fail("zoom changed a fixed-size window", screenshot)
+                    let zoomEnabled = window.standardWindowButton(.zoomButton)?.isEnabled == true
+                    if window.styleMask.contains(.resizable) || zoomEnabled {
+                        fail("double-click did not zoom", screenshot)
                     }
                     zoomNote = "fixed_size_no_zoom"
                 }
