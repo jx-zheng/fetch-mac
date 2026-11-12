@@ -10,15 +10,10 @@ Fetch is a native macOS app. Paste or drop a public video URL, check the preview
 
 ## Screenshots
 
-The main window and Settings, in light and dark. These are renders of the app, not mockups.
+The main window and Settings, in dark mode. These are renders of the app, not mockups.
 
 <p align="center">
-  <img src="docs/screenshots/main-light.png" alt="Fetch main window, light" width="440">
   <img src="docs/screenshots/main-dark.png" alt="Fetch main window, dark" width="440">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/settings-light.png" alt="Fetch settings, light" width="420">
   <img src="docs/screenshots/settings-dark.png" alt="Fetch settings, dark" width="420">
 </p>
 
